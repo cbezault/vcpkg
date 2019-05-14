@@ -14,14 +14,9 @@ endif()
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO PixarAnimationStudios/USD
-    REF v0.8.4
-    SHA512 913049d441f43cacf3fc9d80e0559470e5aea5bd2f59aedb1e739206bae66eb025c7c891434e3d484b350fed686b8ea8f55863c895f587f22d7473128354259a
+    REF v19.05
+    SHA512 4d708835f6efd539d5fff5cbaf0ec4d68c6d0c4d813ee531c4b9589ee585b720c34e993ef0a7ad0104a921ebd7ab8dec46d0c9284ec7f11993057fe81d3729e0
     HEAD_REF master)
-
-vcpkg_apply_patches(
-    SOURCE_PATH ${SOURCE_PATH}
-    PATCHES
-    ${CMAKE_CURRENT_LIST_DIR}/0001-Install-PDB-files.patch)
 
 vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}
@@ -38,22 +33,22 @@ vcpkg_configure_cmake(
 
 vcpkg_install_cmake()
 
-vcpkg_fixup_cmake_targets(CONFIG_PATH "")
+file(
+    RENAME
+        "${CURRENT_PACKAGES_DIR}/pxrConfig.cmake"
+        "${CURRENT_PACKAGES_DIR}/cmake/pxrConfig.cmake")
+
+vcpkg_fixup_cmake_targets(CONFIG_PATH "cmake")
 
 vcpkg_copy_pdbs()
 
 # Remove duplicates in debug folder
 file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/debug/include)
-file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/debug/share)
-file(REMOVE ${CURRENT_PACKAGES_DIR}/debug/pxrConfig.cmake)
 
 # Handle copyright
 file(
-    COPY ${SOURCE_PATH}/LICENSE.txt
-    DESTINATION ${CURRENT_PACKAGES_DIR}/share/usd)
-file(
     RENAME
-        ${CURRENT_PACKAGES_DIR}/share/usd/LICENSE.txt
+        ${SOURCE_PATH}/LICENSE.txt
         ${CURRENT_PACKAGES_DIR}/share/usd/copyright)
 
 # Move all dlls to bin
