@@ -38,15 +38,15 @@ vcpkg_fixup_cmake_targets(CONFIG_PATH lib/cmake/llvm TARGET_PATH share/llvm)
 vcpkg_copy_tool_dependencies(${CURRENT_PACKAGES_DIR}/tools/flang-llvm)
 
 if(NOT DEFINED VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
-    file(READ ${CURRENT_PACKAGES_DIR}/share/flang-llvm/LLVMExports-release.cmake RELEASE_MODULE)
+    file(READ ${CURRENT_PACKAGES_DIR}/share/llvm/LLVMExports-release.cmake RELEASE_MODULE)
     string(REPLACE "\${_IMPORT_PREFIX}/bin" "\${_IMPORT_PREFIX}/tools/flang-llvm" RELEASE_MODULE "${RELEASE_MODULE}")
-    file(WRITE ${CURRENT_PACKAGES_DIR}/share/flang-llvm/LLVMExports-release.cmake "${RELEASE_MODULE}")
+    file(WRITE ${CURRENT_PACKAGES_DIR}/share/llvm/LLVMExports-release.cmake "${RELEASE_MODULE}")
 endif()
 
 if(NOT DEFINED VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "debug")
-    file(READ ${CURRENT_PACKAGES_DIR}/share/flang-llvm/LLVMExports-debug.cmake DEBUG_MODULE)
+    file(READ ${CURRENT_PACKAGES_DIR}/share/llvm/LLVMExports-debug.cmake DEBUG_MODULE)
     string(REPLACE "\${_IMPORT_PREFIX}/debug/bin" "\${_IMPORT_PREFIX}/tools/flang-llvm" DEBUG_MODULE "${DEBUG_MODULE}")
-    file(WRITE ${CURRENT_PACKAGES_DIR}/share/flang-llvm/LLVMExports-debug.cmake "${DEBUG_MODULE}")
+    file(WRITE ${CURRENT_PACKAGES_DIR}/share/llvm/LLVMExports-debug.cmake "${DEBUG_MODULE}")
 endif()
 
 file(REMOVE_RECURSE
