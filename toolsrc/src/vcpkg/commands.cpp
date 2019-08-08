@@ -99,7 +99,12 @@ namespace vcpkg::Commands::Hash
         Util::unused(args.parse_arguments(COMMAND_STRUCTURE));
 
         const fs::path file_to_hash = args.command_arguments[0];
-        const std::string algorithm = args.command_arguments.size() == 2 ? args.command_arguments[1] : "SHA512";
+
+        auto algorithm = vcpkg::Hash::Algorithm{vcpkg::Hash::Algorithm::Sha512};
+        if (args.command_arguments.size() == 2) {
+            algorithm = vcpkg::Hash::Algorithm::from_string(args.command_arguments[1]).value_or_exit(VCPKG_LINE_INFO);
+        }
+
         const std::string hash = vcpkg::Hash::get_file_hash(paths.get_filesystem(), file_to_hash, algorithm);
         System::print2(hash, '\n');
         Checks::exit_success(VCPKG_LINE_INFO);
