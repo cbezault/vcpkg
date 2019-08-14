@@ -38,6 +38,6 @@ namespace vcpkg::Hash
         return lhs != rhs.tag;
     }
 
-    std::string get_string_hash(const std::string& s, Algorithm algo);
+    std::string get_string_hash(StringView s, Algorithm algo);
     std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, Algorithm algo);
 }
