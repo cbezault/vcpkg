@@ -147,12 +147,12 @@ namespace vcpkg::Hash
 
             const std::size_t message_length = end - start;
             if (message_length >= remaining) {
-                std::copy(start, start + remaining, m_chunk.begin() + m_current_chunk_size);
+                std::copy(start, start + remaining, chunk_begin());
                 m_current_chunk_size += remaining;
                 m_message_length += remaining * 8;
                 return start + remaining;
             } else {
-                std::copy(start, end, m_chunk.begin() + m_current_chunk_size);
+                std::copy(start, end, chunk_begin());
                 m_current_chunk_size += message_length;
                 m_message_length += message_length * 8;
                 return nullptr;
@@ -161,7 +161,7 @@ namespace vcpkg::Hash
 
         // called before `get_hash`
         void process_last_chunk() {
-            auto message_length = m_message_length;
+            const auto message_length = m_message_length;
 
             // append the bit '1' to the message
             {
@@ -174,18 +174,24 @@ namespace vcpkg::Hash
             if (chunk_size - m_current_chunk_size < sizeof(m_message_length)) {
                 // not enough space to add the message length
                 // just resize and process full chunk
-                std::fill(m_chunk.begin() + m_current_chunk_size, m_chunk.end(), 0);
+                std::fill(chunk_begin(), m_chunk.end(), 0);
                 m_impl.process_full_chunk(m_chunk);
                 m_current_chunk_size = 0;
             }
 
-            std::fill(m_chunk.begin(), m_chunk.end() - sizeof(m_message_length), 0);
-            for (int i = 0; i < sizeof(message_length); ++i) {
-                m_chunk[i + chunk_size - sizeof(m_message_length)] = top_bits(message_length);
-                message_length <<= 8;
-            }
+            const auto before_length = m_chunk.end() - sizeof(m_message_length);
+            std::fill(chunk_begin(), before_length, 0);
+            std::generate(before_length, m_chunk.end(), [length = message_length]() mutable {
+                const auto result = top_bits(length);
+                length <<= 8;
+                return result;
+            });
 
             m_impl.process_full_chunk(m_chunk);
+        }
+
+        auto chunk_begin() {
+            return m_chunk.begin() + m_current_chunk_size;
         }
 
         using type = typename ShaAlgorithm::type;
