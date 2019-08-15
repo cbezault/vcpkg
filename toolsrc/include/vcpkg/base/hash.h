@@ -38,6 +38,15 @@ namespace vcpkg::Hash
         return lhs != rhs.tag;
     }
 
+    struct Hasher {
+        virtual void add_bytes(const void* start, const void* end) = 0;
+        virtual std::string get_hash() = 0;
+        virtual ~Hasher() = default;
+    };
+
+    std::unique_ptr<Hasher> get_hasher_for(Algorithm algo);
+
+    std::string get_bytes_hash(const void* first, const void* last, Algorithm algo);
     std::string get_string_hash(StringView s, Algorithm algo);
     std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, Algorithm algo);
 }
