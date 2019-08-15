@@ -41,6 +41,43 @@ namespace vcpkg::Hash
         }
     }
 
+    struct UInt128 {
+        std::uint64_t top;
+        std::uint64_t bottom;
+
+        UInt128() = default;
+        UInt128(std::uint64_t value) : top(0), bottom(value) {}
+
+        UInt128& operator<<=(int by) {
+            if (by == 0) {
+                return *this;
+            }
+
+            if (by < 64) {
+                top <<= by;
+                const auto shift_up = bottom >> (64 - by);
+                top |= shift_up;
+                bottom <<= by;
+            } else {
+                top = bottom;
+                top <<= (by - 64);
+            }
+
+            return *this;
+        }
+
+        UInt128& operator+=(std::size_t lhs) {
+            // bottom + lhs > uint64::max
+            if (bottom > std::numeric_limits<std::uint64_t>::max() - lhs) {
+                top += 1;
+            }
+            bottom += lhs;
+            return *this;
+        }
+    };
+
+    UInt128
+
     static void verify_has_only_allowed_chars(const std::string& s)
     {
         static const std::regex ALLOWED_CHARS{"^[a-zA-Z0-9-]*$"};
@@ -56,7 +93,7 @@ namespace vcpkg::Hash
     template <class T>
     static constexpr uchar top_bits(T x)
     {
-        return (x >> ((sizeof(T) - 1) * 8)) & 0xFF;
+        return static_cast<uchar>((x >> ((sizeof(T) - 1) * 8)) & 0xFF);
     }
 
     // treats UIntTy as big endian for the purpose of this mapping
@@ -110,8 +147,14 @@ namespace vcpkg::Hash
     static std::uint64_t shl64(std::uint64_t value, int by) noexcept {
         return value << by;
     }
+    static std::uint64_t shr64(std::uint64_t value, int by) noexcept {
+        return value >> by;
+    }
     static std::uint64_t rol64(std::uint64_t value, int by) noexcept {
         return (value << by) | (value >> (64 - by));
+    }
+    static std::uint64_t ror64(std::uint64_t value, int by) noexcept {
+        return (value >> by) | (value << (64 - by));
     }
 
     template <class ShaAlgorithm>
@@ -194,18 +237,20 @@ namespace vcpkg::Hash
             return m_chunk.begin() + m_current_chunk_size;
         }
 
-        using type = typename ShaAlgorithm::type;
+        using underlying_type = typename ShaAlgorithm::underlying_type;
+        using message_length_type = typename ShaAlgorithm::message_length_type;
         constexpr static std::size_t chunk_size = ShaAlgorithm::chunk_size;
 
         ShaAlgorithm m_impl{};
 
         std::array<uchar, chunk_size> m_chunk{};
         std::size_t m_current_chunk_size = 0;
-        std::uint64_t m_message_length = 0;
+        message_length_type m_message_length = 0;
     };
 
     struct Sha1Algorithm {
-        using type = std::uint32_t;
+        using underlying_type = std::uint32_t;
+        using message_length_type = std::uint64_t;
         constexpr static std::size_t chunk_size = 64; // = 512 / 8
 
         void process_full_chunk(const std::array<uchar, chunk_size>& chunk) {
@@ -274,7 +319,8 @@ namespace vcpkg::Hash
     };
 
     struct Sha256Algorithm {
-        using type = std::uint32_t;
+        using underlying_type = std::uint32_t;
+        using message_length_type = std::uint64_t;
         constexpr static std::size_t chunk_size = 64;
 
         constexpr static std::size_t number_of_rounds = 64;
@@ -358,10 +404,68 @@ namespace vcpkg::Hash
             0x1f83d9ab,
             0x5be0cd19 };
     };
-    #if 0
-    template <>
-    struct Sha2Constants<std::uint64_t> {
+
+    struct Sha512Algorithm {
+        using underlying_type = std::uint64_t;
+        using message_length_type = UInt128;
+        constexpr static std::size_t chunk_size = 128;
+
         constexpr static std::size_t number_of_rounds = 80;
+
+        void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept {
+            std::uint64_t words[number_of_rounds];
+
+            // break chunk into 16 32-bit words
+            for (std::size_t i = 0; i < chunk_size / 4; ++i) {
+                // big-endian -- so the earliest i becomes the most significant
+                words[i]  = shl64(chunk[i * 8 + 0], 56);
+                words[i] |= shl64(chunk[i * 8 + 1], 48);
+                words[i] |= shl64(chunk[i * 8 + 2], 40);
+                words[i] |= shl64(chunk[i * 8 + 3], 32);
+                words[i] |= shl64(chunk[i * 8 + 4], 24);
+                words[i] |= shl64(chunk[i * 8 + 5], 16);
+                words[i] |= shl64(chunk[i * 8 + 6], 8);
+                words[i] |= shl64(chunk[i * 8 + 7], 0);
+            }
+
+            for (std::size_t i = 16; i < number_of_rounds; ++i) {
+                const auto w0 = words[i - 15];
+                const auto s0 = ror64(w0, 7) ^ ror64(w0, 18) ^ shr64(w0, 3);
+                const auto w1 = words[i - 2];
+                const auto s1 = ror64(w1, 17) ^ ror64(w1, 19) ^ shr64(w1, 10);
+                words[i] = words[i - 16] + s0 + words[i - 7] + s1;
+            }
+
+            std::uint64_t local[8];
+            std::copy(begin(), end(), std::begin(local));
+
+            for (std::size_t i = 0; i < number_of_rounds; ++i) {
+                const auto a = local[0];
+                const auto b = local[1];
+                const auto c = local[2];
+
+                const auto s0 = ror64(a, 2) ^ ror64(a, 13) ^ ror64(a, 22);
+                const auto maj = (a & b) ^ (a & c) ^ (b & c);
+                const auto tmp1 = s0 + maj;
+
+                const auto e = local[4];
+
+                const auto s1 = ror64(e, 6) ^ ror64(e, 11) ^ ror64(e, 25);
+                const auto ch = (e & local[5]) ^ (~e & local[6]);
+                const auto tmp2 = local[7] + s1 + ch + round_constants[i] + words[i];
+
+                const auto l3 = local[3];
+                for (std::size_t i = 7; i > 0; --i) {
+                    local[i] = local[i - 1];
+                }
+                local[4] += tmp2;
+                local[0] = tmp1 + tmp2;
+            }
+
+            std::transform(std::begin(local), std::end(local), begin(), begin(), [](std::uint64_t lhs, std::uint64_t rhs) {
+                return lhs + rhs;
+            });
+        }
 
         constexpr static std::array<std::uint64_t, number_of_rounds> round_constants = {
             0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc, 0x3956c25bf348b538,
@@ -381,8 +485,19 @@ namespace vcpkg::Hash
             0x113f9804bef90dae, 0x1b710b35131c471b, 0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc,
             0x431d67c49c100d4c, 0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817
         };
+
+        std::uint64_t* begin() {
+            return &m_digest[0];
+        }
+        std::uint64_t* end() {
+            return &m_digest[8];
+        }
+
+        std::uint64_t m_digest[8] = {
+            0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+            0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179
+        };
     };
-    #endif
 
     std::unique_ptr<Hasher> get_hasher_for(Algorithm algo) {
         switch (algo.tag)
@@ -392,8 +507,7 @@ namespace vcpkg::Hash
             case Algorithm::Sha256:
                 return std::make_unique<ShaHasher<Sha256Algorithm>>();
             case Algorithm::Sha512:
-                //auto hasher = Sha2Hasher<std::uint64_t>();
-                //return f(hasher);
+                return std::make_unique<ShaHasher<Sha512Algorithm>>();
             default: vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown hashing algorithm: %s", algo);
         }
     }
@@ -410,9 +524,10 @@ namespace vcpkg::Hash
                 auto hasher = ShaHasher<Sha256Algorithm>();
                 return f(hasher);
             }
-            case Algorithm::Sha512:
-                //auto hasher = Sha2Hasher<std::uint64_t>();
-                //return f(hasher);
+            case Algorithm::Sha512: {
+                auto hasher = ShaHasher<Sha512Algorithm>();
+                return f(hasher);
+            }
             default: vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown hashing algorithm: %s", algo);
         }
     }
