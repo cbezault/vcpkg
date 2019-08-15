@@ -31,6 +31,8 @@ namespace vcpkg::Hash
     struct Hasher
     {
         virtual void add_bytes(const void* start, const void* end) noexcept = 0;
+
+        // one may only call this once before calling `clear()` or the dtor
         virtual std::string get_hash() noexcept = 0;
         virtual void clear() noexcept = 0;
         virtual ~Hasher() = default;

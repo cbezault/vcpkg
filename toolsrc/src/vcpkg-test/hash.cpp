@@ -14,7 +14,7 @@ using vcpkg::StringView;
 #define CHECK_HASH(size, value, real_hash)                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        std::uint8_t data[size];                                                                                       \
+        unsigned char data[size];                                                                                       \
         std::fill(std::begin(data), std::end(data), value);                                                            \
         const auto hash = Hash::get_bytes_hash(data, data + size, algorithm);                                          \
         REQUIRE(hash == real_hash);                                                                                    \
@@ -39,8 +39,8 @@ using vcpkg::StringView;
     do                                                                                                                 \
     {                                                                                                                  \
         hasher->clear();                                                                                               \
-        std::size_t remaining = size;                                                                                  \
-        std::uint8_t buffer[512];                                                                                      \
+        std::uint64_t remaining = size;                                                                                  \
+        unsigned char buffer[512];                                                                                      \
         std::fill(std::begin(buffer), std::end(buffer), value);                                                        \
         while (remaining)                                                                                              \
         {                                                                                                              \
@@ -88,7 +88,7 @@ TEST_CASE ("SHA256: NIST test data (small)", "[hash][sha256]")
 
     CHECK_HASH(1, 0xbd, "68325720aabd7c82f30f554b313d0570c95accbb7dc4b5aae11204c08ffe732b");
     {
-        const std::uint8_t data[] = {0xc9, 0x8c, 0x8e, 0x55};
+        const unsigned char data[] = {0xc9, 0x8c, 0x8e, 0x55};
         CHECK_HASH_OF(data, "7abc22c0ae5af26ce93dbb94433a0e0b2e119d014f8e7f65bd56c61ccccd9504");
     }
     CHECK_HASH(55, 0, "02779466cdec163811d078815c633f21901413081449002f24aa3e80f0b88ef7");
@@ -138,28 +138,28 @@ TEST_CASE ("SHA512: NIST test data (small)", "[hash][sha512]")
                "1161798015052893a48c3d161");
 }
 
-TEST_CASE ("SHA256: NIST test data (large 1)", "[.hash-expensive][.sha256-expensive]")
+TEST_CASE ("SHA256: NIST test data (large 1)", "[.][hash-expensive][sha256-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(1'000'000, 0, "d29751f2649b32ff572b5e0a9f541ea660a50f94ff0beedfb0b692b924cc8025");
 }
-TEST_CASE ("SHA256: NIST test data (large 2)", "[.hash-expensive][.sha256-expensive]")
+TEST_CASE ("SHA256: NIST test data (large 2)", "[.][hash-expensive][sha256-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(0x2000'0000, 'Z', "15a1868c12cc53951e182344277447cd0979536badcc512ad24c67e9b2d4f3dd");
 }
-TEST_CASE ("SHA256: NIST test data (large 3)", "[.hash-expensive][.sha256-expensive]")
+TEST_CASE ("SHA256: NIST test data (large 3)", "[.][hash-expensive][sha256-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(0x4100'0000, 0, "461c19a93bd4344f9215f5ec64357090342bc66b15a148317d276e31cbc20b53");
 }
-TEST_CASE ("SHA256: NIST test data (large 4)", "[.hash-expensive][.sha256-expensive]")
+TEST_CASE ("SHA256: NIST test data (large 4)", "[.][hash-expensive][sha256-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
-    CHECK_HASH_LARGE(0x6000'003e, 'B', "c23ce8a7895f4b21ec0daf37920ac0a262a220045a03eb2dfed48ef9b05aabea");
+    CHECK_HASH_LARGE(0x6000'003E, 'B', "c23ce8a7895f4b21ec0daf37920ac0a262a220045a03eb2dfed48ef9b05aabea");
 }
 
-TEST_CASE ("SHA512: NIST test data (large 1)", "[.hash-expensive][.sha512-expensive]")
+TEST_CASE ("SHA512: NIST test data (large 1)", "[.][hash-expensive][sha512-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(1'000'000,
@@ -167,7 +167,7 @@ TEST_CASE ("SHA512: NIST test data (large 1)", "[.hash-expensive][.sha512-expens
                      "ce044bc9fd43269d5bbc946cbebc3bb711341115cc4abdf2edbc3ff2c57ad4b15deb699bda257fea5aef9c6e55fcf4cf9"
                      "dc25a8c3ce25f2efe90908379bff7ed");
 }
-TEST_CASE ("SHA512: NIST test data (large 2)", "[.hash-expensive][.sha512-expensive]")
+TEST_CASE ("SHA512: NIST test data (large 2)", "[.][hash-expensive][sha512-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(0x2000'0000,
@@ -175,7 +175,7 @@ TEST_CASE ("SHA512: NIST test data (large 2)", "[.hash-expensive][.sha512-expens
                      "da172279f3ebbda95f6b6e1e5f0ebec682c25d3d93561a1624c2fa9009d64c7e9923f3b46bcaf11d39a531f43297992ba"
                      "4155c7e827bd0f1e194ae7ed6de4cac");
 }
-TEST_CASE ("SHA512: NIST test data (large 3)", "[.hash-expensive][.sha512-expensive]")
+TEST_CASE ("SHA512: NIST test data (large 3)", "[.][hash-expensive][sha512-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(0x4100'0000,
@@ -183,11 +183,56 @@ TEST_CASE ("SHA512: NIST test data (large 3)", "[.hash-expensive][.sha512-expens
                      "14b1be901cb43549b4d831e61e5f9df1c791c85b50e85f9d6bc64135804ad43ce8402750edbe4e5c0fc170b99cf78b9f4"
                      "ecb9c7e02a157911d1bd1832d76784f");
 }
-TEST_CASE ("SHA512: NIST test data (large 4)", "[.hash-expensive][.sha512-expensive]")
+TEST_CASE ("SHA512: NIST test data (large 4)", "[.][hash-expensive][sha512-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
-    CHECK_HASH_LARGE(0x6000'003e,
+    CHECK_HASH_LARGE(0x6000'003E,
                      'B',
                      "fd05e13eb771f05190bd97d62647157ea8f1f6949a52bb6daaedbad5f578ec59b1b8d6c4a7ecb2feca6892b4dc1387716"
                      "70a0f3bd577eea326aed40ab7dd58b1");
 }
+
+#if defined(CATCH_CONFIG_ENABLE_BENCHMARKING)
+TEST_CASE ("SHA256: large -- benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
+{
+    using Catch::Benchmark::Chronometer;
+
+    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
+    const auto hash = [&hasher](Chronometer& meter, std::uint64_t size, unsigned char byte) {
+        unsigned char buffer[1024];
+        std::fill(std::begin(buffer), std::end(buffer), byte);
+
+        meter.measure([&] {
+            hasher->clear();
+            std::uint64_t remaining = size;
+            while (remaining)
+            {
+                if (remaining < 512)
+                {
+                    hasher->add_bytes(std::begin(buffer), std::begin(buffer) + remaining);
+                    remaining = 0;
+                }
+                else
+                {
+                    hasher->add_bytes(std::begin(buffer), std::end(buffer));
+                    remaining -= 512;
+                }
+            }
+            hasher->get_hash();
+        });
+    };
+
+    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
+        hash(meter, 1'000'000, 0);
+    };
+    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
+        hash(meter, 0x2000'0000, 'Z');
+    };
+    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
+        hash(meter, 0x4100'0000, 0);
+    };
+    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
+        hash(meter, 0x6000'003E, 'B');
+    };
+}
+#endif

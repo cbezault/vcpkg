@@ -14,6 +14,10 @@
 #ifndef NT_SUCCESS
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #endif
+
+#define USE_BCRYPT_HASHER 0
+#else
+#define USE_BCRYPT_HASHER 0
 #endif
 
 namespace vcpkg::Hash
@@ -131,9 +135,10 @@ namespace vcpkg::Hash
                            s);
     }
 
-    template <class T>
+    template<class T>
     void top_bits(T) = delete;
 
+    static constexpr uchar top_bits(uchar x) { return x; }
     static constexpr uchar top_bits(std::uint32_t x) { return (x >> 24) & 0xFF; }
     static constexpr uchar top_bits(std::uint64_t x) { return (x >> 56) & 0xFF; }
     static constexpr uchar top_bits(UInt128 x) { return top_bits(x.top); }
@@ -173,130 +178,207 @@ namespace vcpkg::Hash
         return output;
     }
 
-    template<class WordTy>
-    static WordTy shl(WordTy value, int by) noexcept
-    {
-        return value << by;
-    }
-
-    static std::uint32_t shr32(std::uint32_t value, int by) noexcept { return value >> by; }
-    static std::uint32_t rol32(std::uint32_t value, int by) noexcept { return (value << by) | (value >> (32 - by)); }
-    static std::uint32_t ror32(std::uint32_t value, int by) noexcept { return (value >> by) | (value << (32 - by)); }
-
-    static std::uint64_t shr64(std::uint64_t value, int by) noexcept { return value >> by; }
-    static std::uint64_t ror64(std::uint64_t value, int by) noexcept { return (value >> by) | (value << (64 - by)); }
-
-    template<class ShaAlgorithm>
-    struct ShaHasher final : Hasher
-    {
-        ShaHasher() = default;
-
-        virtual void add_bytes(const void* start, const void* end) noexcept override
-        {
-            for (;;)
-            {
-                start = add_to_unprocessed(start, end);
-                if (!start)
-                {
-                    break; // done
-                }
-
-                m_impl.process_full_chunk(m_chunk);
-                m_current_chunk_size = 0;
-            }
-        }
-
-        virtual void clear() noexcept override
-        {
-            m_impl.clear();
-
-            // m_chunk is theoretically uninitialized, so no need to reset it
-            m_current_chunk_size = 0;
-            m_message_length = 0;
-        }
-
-        virtual std::string get_hash() noexcept override
-        {
-            process_last_chunk();
-            return to_hex(m_impl.begin(), m_impl.end());
-        }
-
-    private:
-        // if unprocessed gets filled,
-        // returns a pointer to the remainder of the block (which might be end)
-        // else, returns nullptr
-        const void* add_to_unprocessed(const void* start_, const void* end_) noexcept
-        {
-            const uchar* start = static_cast<const uchar*>(start_);
-            const uchar* end = static_cast<const uchar*>(end_);
-
-            const auto remaining = chunk_size - m_current_chunk_size;
-
-            const std::size_t message_length = end - start;
-            if (message_length >= remaining)
-            {
-                std::copy(start, start + remaining, chunk_begin());
-                m_current_chunk_size += remaining;
-                m_message_length += remaining * 8;
-                return start + remaining;
-            }
-            else
-            {
-                std::copy(start, end, chunk_begin());
-                m_current_chunk_size += message_length;
-                m_message_length += message_length * 8;
-                return nullptr;
-            }
-        }
-
-        // called before `get_hash`
-        void process_last_chunk() noexcept
-        {
-            const auto message_length = m_message_length;
-
-            // append the bit '1' to the message
-            {
-                const uchar temp = 0x80;
-                add_to_unprocessed(&temp, &temp + 1);
-            }
-
-            // append 0 to the message so that the resulting length is just enough
-            // to add the message length
-            if (chunk_size - m_current_chunk_size < sizeof(m_message_length))
-            {
-                // not enough space to add the message length
-                // just resize and process full chunk
-                std::fill(chunk_begin(), m_chunk.end(), 0);
-                m_impl.process_full_chunk(m_chunk);
-                m_current_chunk_size = 0;
-            }
-
-            const auto before_length = m_chunk.end() - sizeof(m_message_length);
-            std::fill(chunk_begin(), before_length, 0);
-            std::generate(before_length, m_chunk.end(), [length = message_length]() mutable {
-                const auto result = top_bits(length);
-                length <<= 8;
-                return result;
-            });
-
-            m_impl.process_full_chunk(m_chunk);
-        }
-
-        auto chunk_begin() { return m_chunk.begin() + m_current_chunk_size; }
-
-        using underlying_type = typename ShaAlgorithm::underlying_type;
-        using message_length_type = typename ShaAlgorithm::message_length_type;
-        constexpr static std::size_t chunk_size = ShaAlgorithm::chunk_size;
-
-        ShaAlgorithm m_impl{};
-
-        std::array<uchar, chunk_size> m_chunk{};
-        std::size_t m_current_chunk_size = 0;
-        message_length_type m_message_length = 0;
-    };
-
     namespace
     {
+#if USE_BCRYPT_HASHER
+        struct BCryptHasher : Hasher
+        {
+            explicit BCryptHasher(Algorithm algo) noexcept
+            {
+                switch (algo.tag)
+                {
+                    case Algorithm::Sha1: alg_handle = BCRYPT_SHA1_ALG_HANDLE; break;
+                    case Algorithm::Sha256: alg_handle = BCRYPT_SHA256_ALG_HANDLE; break;
+                    case Algorithm::Sha512: alg_handle = BCRYPT_SHA512_ALG_HANDLE; break;
+                    default: Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown algorithm");
+                }
+
+                clear();
+            }
+
+            virtual void add_bytes(const void* start_, const void* end_) noexcept override
+            {
+                // BCryptHashData takes its input as non-const, but does not modify it
+                uchar* start = const_cast<uchar*>(static_cast<const uchar*>(start_));
+                const uchar* end = static_cast<const uchar*>(end_);
+
+                vcpkg::Checks::check_exit(VCPKG_LINE_INFO, end - start >= 0);
+                vcpkg::Checks::check_exit(VCPKG_LINE_INFO, end - start < std::numeric_limits<unsigned long>::max());
+
+                const auto length = static_cast<unsigned long>(end - start);
+                const NTSTATUS error_code = BCryptHashData(hash_handle, start, length, 0);
+                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to process a chunk");
+            }
+
+            virtual void clear() noexcept override
+            {
+                if (hash_handle) BCryptDestroyHash(hash_handle);
+                const NTSTATUS error_code = BCryptCreateHash(alg_handle, &hash_handle, nullptr, 0, nullptr, 0, 0);
+                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to initialize the hasher");
+            }
+
+            virtual std::string get_hash() noexcept override
+            {
+                const auto hash_size = get_hash_buffer_size();
+                const auto buffer = std::make_unique<uchar[]>(hash_size);
+                const auto hash = buffer.get();
+
+                const NTSTATUS error_code = BCryptFinishHash(hash_handle, hash, hash_size, 0);
+                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to finalize the hash");
+                return to_hex(hash, hash + hash_size);
+            }
+
+        private:
+            unsigned long get_hash_buffer_size() const
+            {
+                unsigned long hash_buffer_bytes;
+                unsigned long cb_data;
+                const NTSTATUS error_code = BCryptGetProperty(alg_handle,
+                                                              BCRYPT_HASH_LENGTH,
+                                                              reinterpret_cast<uchar*>(&hash_buffer_bytes),
+                                                              sizeof(hash_buffer_bytes),
+                                                              &cb_data,
+                                                              0);
+                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to get hash length");
+
+                return hash_buffer_bytes;
+            }
+
+            BCRYPT_HASH_HANDLE hash_handle = nullptr;
+            BCRYPT_ALG_HANDLE alg_handle = nullptr;
+        };
+#else
+
+        template<class WordTy>
+        static WordTy shl(WordTy value, int by) noexcept
+        {
+            return value << by;
+        }
+
+        static std::uint32_t shr32(std::uint32_t value, int by) noexcept { return value >> by; }
+        static std::uint32_t rol32(std::uint32_t value, int by) noexcept
+        {
+            return (value << by) | (value >> (32 - by));
+        }
+        static std::uint32_t ror32(std::uint32_t value, int by) noexcept
+        {
+            return (value >> by) | (value << (32 - by));
+        }
+
+        static std::uint64_t shr64(std::uint64_t value, int by) noexcept { return value >> by; }
+        static std::uint64_t ror64(std::uint64_t value, int by) noexcept
+        {
+            return (value >> by) | (value << (64 - by));
+        }
+
+        template<class ShaAlgorithm>
+        struct ShaHasher final : Hasher
+        {
+            ShaHasher() = default;
+
+            virtual void add_bytes(const void* start, const void* end) noexcept override
+            {
+                for (;;)
+                {
+                    start = add_to_unprocessed(start, end);
+                    if (!start)
+                    {
+                        break; // done
+                    }
+
+                    m_impl.process_full_chunk(m_chunk);
+                    m_current_chunk_size = 0;
+                }
+            }
+
+            virtual void clear() noexcept override
+            {
+                m_impl.clear();
+
+                // m_chunk is theoretically uninitialized, so no need to reset it
+                m_current_chunk_size = 0;
+                m_message_length = 0;
+            }
+
+            virtual std::string get_hash() noexcept override
+            {
+                process_last_chunk();
+                return to_hex(m_impl.begin(), m_impl.end());
+            }
+
+        private:
+            // if unprocessed gets filled,
+            // returns a pointer to the remainder of the block (which might be end)
+            // else, returns nullptr
+            const void* add_to_unprocessed(const void* start_, const void* end_) noexcept
+            {
+                const uchar* start = static_cast<const uchar*>(start_);
+                const uchar* end = static_cast<const uchar*>(end_);
+
+                const auto remaining = chunk_size - m_current_chunk_size;
+
+                const std::size_t message_length = end - start;
+                if (message_length >= remaining)
+                {
+                    std::copy(start, start + remaining, chunk_begin());
+                    m_current_chunk_size += remaining;
+                    m_message_length += remaining * 8;
+                    return start + remaining;
+                }
+                else
+                {
+                    std::copy(start, end, chunk_begin());
+                    m_current_chunk_size += message_length;
+                    m_message_length += message_length * 8;
+                    return nullptr;
+                }
+            }
+
+            // called before `get_hash`
+            void process_last_chunk() noexcept
+            {
+                const auto message_length = m_message_length;
+
+                // append the bit '1' to the message
+                {
+                    const uchar temp = 0x80;
+                    add_to_unprocessed(&temp, &temp + 1);
+                }
+
+                // append 0 to the message so that the resulting length is just enough
+                // to add the message length
+                if (chunk_size - m_current_chunk_size < sizeof(m_message_length))
+                {
+                    // not enough space to add the message length
+                    // just resize and process full chunk
+                    std::fill(chunk_begin(), m_chunk.end(), 0);
+                    m_impl.process_full_chunk(m_chunk);
+                    m_current_chunk_size = 0;
+                }
+
+                const auto before_length = m_chunk.end() - sizeof(m_message_length);
+                std::fill(chunk_begin(), before_length, 0);
+                std::generate(before_length, m_chunk.end(), [length = message_length]() mutable {
+                    const auto result = top_bits(length);
+                    length <<= 8;
+                    return result;
+                });
+
+                m_impl.process_full_chunk(m_chunk);
+            }
+
+            auto chunk_begin() { return m_chunk.begin() + m_current_chunk_size; }
+
+            using underlying_type = typename ShaAlgorithm::underlying_type;
+            using message_length_type = typename ShaAlgorithm::message_length_type;
+            constexpr static std::size_t chunk_size = ShaAlgorithm::chunk_size;
+
+            ShaAlgorithm m_impl{};
+
+            std::array<uchar, chunk_size> m_chunk{};
+            std::size_t m_current_chunk_size = 0;
+            message_length_type m_message_length = 0;
+        };
         template<class WordTy>
         inline void sha_fill_initial_words(const uchar* chunk, WordTy* words)
         {
@@ -323,14 +405,14 @@ namespace vcpkg::Hash
 
             void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept
             {
-                std::uint32_t words[80];
+                /*
+                    this is 80 words long, but we only need 16 words back in
+                    order to calculate every value -- thus, we save stack by
+                    calculating 16 at a time, and always looking up mod 16
+                */
+                std::uint32_t words[16];
 
                 sha_fill_initial_words(&chunk[0], words);
-
-                for (std::size_t i = 16; i < 80; ++i)
-                {
-                    words[i] = rol32(words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16], 1);
-                }
 
                 std::uint32_t a = m_digest[0];
                 std::uint32_t b = m_digest[1];
@@ -340,6 +422,12 @@ namespace vcpkg::Hash
 
                 for (std::size_t i = 0; i < 80; ++i)
                 {
+                    if (i >= 16)
+                    {
+                        const auto sum = words[(i + 13) & 0xF] ^ words[(i + 8) & 0xF] ^ words[(i + 2) & 0xF] ^ words[i & 0xF];
+                        words[i & 0xF] = rol32(sum, 1);
+                    }
+
                     std::uint32_t f;
                     std::uint32_t k;
 
@@ -364,7 +452,7 @@ namespace vcpkg::Hash
                         k = 0xCA62C1D6;
                     }
 
-                    auto tmp = rol32(a, 5) + f + e + k + words[i];
+                    auto tmp = rol32(a, 5) + f + e + k + words[i & 0xF];
                     e = d;
                     d = c;
                     c = rol32(b, 30);
@@ -406,51 +494,54 @@ namespace vcpkg::Hash
 
             void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept
             {
-                std::uint32_t words[number_of_rounds];
+                /*
+                    this is 64 words long, but we only need 16 words back in
+                    order to calculate every value -- thus, we save stack by
+                    calculating 16 at a time, and always looking up mod 16
+                */
+                std::uint32_t words[16];
 
                 sha_fill_initial_words(&chunk[0], words);
 
-                for (std::size_t i = 16; i < number_of_rounds; ++i)
-                {
-                    const auto w0 = words[i - 15];
-                    const auto s0 = ror32(w0, 7) ^ ror32(w0, 18) ^ shr32(w0, 3);
-                    const auto w1 = words[i - 2];
-                    const auto s1 = ror32(w1, 17) ^ ror32(w1, 19) ^ shr32(w1, 10);
-                    words[i] = words[i - 16] + s0 + words[i - 7] + s1;
-                }
-
+                // these are in reverse so that we don't have to rotate the locals;
+                // we can just leave them in place as a circular buffer on i
                 std::uint32_t local[8];
-                std::copy(begin(), end(), std::begin(local));
+                std::reverse_copy(begin(), end(), std::begin(local));
 
                 for (std::size_t i = 0; i < number_of_rounds; ++i)
                 {
-                    const auto a = local[0];
-                    const auto b = local[1];
-                    const auto c = local[2];
+                    if (i >= 16) {
+                        const auto w0 = words[(i + 1) & 0xF];
+                        const auto s0 = ror32(w0, 7) ^ ror32(w0, 18) ^ shr32(w0, 3);
+                        const auto w1 = words[(i + 14) & 0xF];
+                        const auto s1 = ror32(w1, 17) ^ ror32(w1, 19) ^ shr32(w1, 10);
+                        words[i & 0xF] += s0 + words[(i + 9) & 0xF] + s1;
+                    }
+
+                    auto& h = local[i & 0x7];
+                    const auto g = local[(i + 1) & 0x7];
+                    const auto f = local[(i + 2) & 0x7];
+                    const auto e = local[(i + 3) & 0x7];
+                    auto& d = local[(i + 4) & 0x7];
+                    const auto c = local[(i + 5) & 0x7];
+                    const auto b = local[(i + 6) & 0x7];
+                    const auto a = local[(i + 7) & 0x7];
 
                     const auto s0 = ror32(a, 2) ^ ror32(a, 13) ^ ror32(a, 22);
                     const auto maj = (a & b) ^ (a & c) ^ (b & c);
                     const auto tmp1 = s0 + maj;
 
-                    const auto e = local[4];
-
                     const auto s1 = ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25);
-                    const auto ch = (e & local[5]) ^ (~e & local[6]);
-                    const auto tmp2 = local[7] + s1 + ch + round_constants[i] + words[i];
+                    const auto ch = (e & f) ^ (~e & g);
+                    const auto tmp2 = h + s1 + ch + round_constants[i] + words[i & 0xF];
 
-                    const auto l3 = local[3];
-                    for (std::size_t i = 7; i > 0; --i)
-                    {
-                        local[i] = local[i - 1];
-                    }
-                    local[4] += tmp2;
-                    local[0] = tmp1 + tmp2;
+                    d += tmp2;
+                    h = tmp1 + tmp2;
                 }
 
-                std::transform(
-                    std::begin(local), std::end(local), begin(), begin(), [](std::uint32_t lhs, std::uint32_t rhs) {
-                        return lhs + rhs;
-                    });
+                for (int i = 0; i < 8; ++i) {
+                    m_digest[i] += local[7 - i];
+                }
             }
 
             void clear() noexcept
@@ -493,24 +584,27 @@ namespace vcpkg::Hash
 
             void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept
             {
-                std::uint64_t words[number_of_rounds];
+                /*
+                    this is 80 words long, but we only need 16 words back in
+                    order to calculate every value -- thus, we save stack by
+                    calculating 16 at a time, and always looking up mod 16
+                */
+                std::uint64_t words[16];
 
                 sha_fill_initial_words(&chunk[0], words);
-
-                for (std::size_t i = 16; i < number_of_rounds; ++i)
-                {
-                    const auto w0 = words[i - 15];
-                    const auto s0 = ror64(w0, 1) ^ ror64(w0, 8) ^ shr64(w0, 7);
-                    const auto w1 = words[i - 2];
-                    const auto s1 = ror64(w1, 19) ^ ror64(w1, 61) ^ shr64(w1, 6);
-                    words[i] = words[i - 16] + s0 + words[i - 7] + s1;
-                }
 
                 std::uint64_t local[8];
                 std::copy(begin(), end(), std::begin(local));
 
                 for (std::size_t i = 0; i < number_of_rounds; ++i)
                 {
+                    if (i >= 16) {
+                        const auto w0 = words[(i + 1) & 0xF];
+                        const auto s0 = ror64(w0, 1) ^ ror64(w0, 8) ^ shr64(w0, 7);
+                        const auto w1 = words[(i + 14) & 0xF];
+                        const auto s1 = ror64(w1, 19) ^ ror64(w1, 61) ^ shr64(w1, 6);
+                        words[i & 0xF] += s0 + words[(i + 9) & 0xF] + s1;
+                    }
                     const auto a = local[0];
                     const auto b = local[1];
                     const auto c = local[2];
@@ -523,7 +617,7 @@ namespace vcpkg::Hash
 
                     const auto s1 = ror64(e, 14) ^ ror64(e, 18) ^ ror64(e, 41);
                     const auto ch = (e & local[5]) ^ (~e & local[6]);
-                    const auto tmp1 = local[7] + s1 + ch + round_constants[i] + words[i];
+                    const auto tmp1 = local[7] + s1 + ch + round_constants[i] + words[i & 0xF];
 
                     for (std::size_t i = 7; i > 0; --i)
                     {
@@ -574,10 +668,14 @@ namespace vcpkg::Hash
 
             std::uint64_t m_digest[8];
         };
-
+#endif
     }
+
     std::unique_ptr<Hasher> get_hasher_for(Algorithm algo)
     {
+#if USE_BCRYPT_HASHER
+        return std::make_unique<BCryptHasher>(algo);
+#else
         switch (algo.tag)
         {
             case Algorithm::Sha1: return std::make_unique<ShaHasher<Sha1Algorithm>>();
@@ -585,11 +683,16 @@ namespace vcpkg::Hash
             case Algorithm::Sha512: return std::make_unique<ShaHasher<Sha512Algorithm>>();
             default: vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown hashing algorithm: %s", algo);
         }
+#endif
     }
 
     template<class F>
     static std::string do_hash(Algorithm algo, const F& f)
     {
+#if USE_BCRYPT_HASHER
+        auto hasher = BCryptHasher(algo);
+        return f(hasher);
+#else
         switch (algo.tag)
         {
             case Algorithm::Sha1:
@@ -609,6 +712,7 @@ namespace vcpkg::Hash
             }
             default: vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown hashing algorithm: %s", algo);
         }
+#endif
     }
 
     std::string get_bytes_hash(const void* first, const void* last, Algorithm algo)
@@ -628,228 +732,4 @@ namespace vcpkg::Hash
     {
         vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "aww");
     }
-
-#if 0
-#if defined(_WIN32)
-    namespace
-    {
-        std::string to_hex(const unsigned char* string, const size_t bytes)
-        {
-            static constexpr char HEX_MAP[] = "0123456789abcdef";
-
-            std::string output;
-            output.resize(2 * bytes);
-
-            size_t current_char = 0;
-            for (size_t i = 0; i < bytes; i++)
-            {
-                // high
-                output[current_char] = HEX_MAP[(string[i] & 0xF0) >> 4];
-                ++current_char;
-                // low
-                output[current_char] = HEX_MAP[(string[i] & 0x0F)];
-                ++current_char;
-            }
-
-            return output;
-        }
-
-        class BCryptHasher
-        {
-            struct BCryptAlgorithmHandle : Util::ResourceBase
-            {
-                BCRYPT_ALG_HANDLE handle = nullptr;
-
-                ~BCryptAlgorithmHandle()
-                {
-                    if (handle) BCryptCloseAlgorithmProvider(handle, 0);
-                }
-            };
-
-            struct BCryptHashHandle : Util::ResourceBase
-            {
-                BCRYPT_HASH_HANDLE handle = nullptr;
-
-                ~BCryptHashHandle()
-                {
-                    if (handle) BCryptDestroyHash(handle);
-                }
-            };
-
-            static void initialize_hash_handle(BCryptHashHandle& hash_handle,
-                                               const BCryptAlgorithmHandle& algorithm_handle)
-            {
-                const NTSTATUS error_code =
-                    BCryptCreateHash(algorithm_handle.handle, &hash_handle.handle, nullptr, 0, nullptr, 0, 0);
-                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to initialize the hasher");
-            }
-
-            static void hash_data(BCryptHashHandle& hash_handle, const unsigned char* buffer, const size_t& data_size)
-            {
-                const NTSTATUS error_code = BCryptHashData(
-                    hash_handle.handle, const_cast<unsigned char*>(buffer), static_cast<ULONG>(data_size), 0);
-                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to hash data");
-            }
-
-            static std::string finalize_hash_handle(const BCryptHashHandle& hash_handle, const ULONG length_in_bytes)
-            {
-                std::unique_ptr<unsigned char[]> hash_buffer = std::make_unique<UCHAR[]>(length_in_bytes);
-                const NTSTATUS error_code = BCryptFinishHash(hash_handle.handle, hash_buffer.get(), length_in_bytes, 0);
-                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to finalize the hash");
-                return to_hex(hash_buffer.get(), length_in_bytes);
-            }
-
-        public:
-            explicit BCryptHasher(std::string hash_type)
-            {
-                NTSTATUS error_code = BCryptOpenAlgorithmProvider(
-                    &this->algorithm_handle.handle,
-                    Strings::to_utf16(Strings::ascii_to_uppercase(std::move(hash_type))).c_str(),
-                    nullptr,
-                    0);
-                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to open the algorithm provider");
-
-                DWORD hash_buffer_bytes;
-                DWORD cb_data;
-                error_code = BCryptGetProperty(this->algorithm_handle.handle,
-                                               BCRYPT_HASH_LENGTH,
-                                               reinterpret_cast<PUCHAR>(&hash_buffer_bytes),
-                                               sizeof(DWORD),
-                                               &cb_data,
-                                               0);
-                Checks::check_exit(VCPKG_LINE_INFO, NT_SUCCESS(error_code), "Failed to get hash length");
-                this->length_in_bytes = hash_buffer_bytes;
-            }
-
-            std::string hash_file(const fs::path& path) const
-            {
-                BCryptHashHandle hash_handle;
-                initialize_hash_handle(hash_handle, this->algorithm_handle);
-
-                FILE* file = nullptr;
-                const auto ec = _wfopen_s(&file, path.c_str(), L"rb");
-                Checks::check_exit(VCPKG_LINE_INFO, ec == 0, "Failed to open file: %s", path.u8string());
-                if (file != nullptr)
-                {
-                    unsigned char buffer[4096];
-                    while (const auto actual_size = fread(buffer, 1, sizeof(buffer), file))
-                    {
-                        hash_data(hash_handle, buffer, actual_size);
-                    }
-                    fclose(file);
-                }
-
-                return finalize_hash_handle(hash_handle, length_in_bytes);
-            }
-
-            std::string hash_string(const std::string& s) const
-            {
-                BCryptHashHandle hash_handle;
-                initialize_hash_handle(hash_handle, this->algorithm_handle);
-                hash_data(hash_handle, reinterpret_cast<const unsigned char*>(s.c_str()), s.size());
-                return finalize_hash_handle(hash_handle, length_in_bytes);
-            }
-
-        private:
-            BCryptAlgorithmHandle algorithm_handle;
-            ULONG length_in_bytes;
-        };
-    }
-
-    std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, const std::string& hash_type)
-    {
-        Checks::check_exit(VCPKG_LINE_INFO, fs.exists(path), "File %s does not exist", path.u8string());
-        return BCryptHasher{hash_type}.hash_file(path);
-    }
-
-    std::string get_string_hash(const std::string& s, const std::string& hash_type)
-    {
-        verify_has_only_allowed_chars(s);
-        return BCryptHasher{hash_type}.hash_string(s);
-    }
-
-#else
-    static std::string get_digest_size(const std::string& hash_type)
-    {
-        if (!Strings::case_insensitive_ascii_starts_with(hash_type, "SHA"))
-        {
-            Checks::exit_with_message(
-                VCPKG_LINE_INFO, "shasum only supports SHA hashes, but %s was provided", hash_type);
-        }
-
-        return hash_type.substr(3, hash_type.length() - 3);
-    }
-
-    static std::string parse_shasum_output(const std::string& shasum_output)
-    {
-        std::vector<std::string> split = Strings::split(shasum_output, " ");
-        // Checking if >= 3 because filenames with spaces will show up as multiple tokens.
-        // The hash is the first token so we don't need to parse the filename anyway.
-        Checks::check_exit(VCPKG_LINE_INFO,
-                           split.size() >= 3,
-                           "Expected output of the form [hash filename\n] (3+ tokens), but got\n"
-                           "[%s] (%s tokens)",
-                           shasum_output,
-                           std::to_string(split.size()));
-
-        return split[0];
-    }
-
-    std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, const std::string& hash_type)
-    {
-        const std::string digest_size = get_digest_size(hash_type);
-        Checks::check_exit(VCPKG_LINE_INFO, fs.exists(path), "File %s does not exist", path.u8string());
-
-        // Try hash-specific tools, like sha512sum
-        {
-            const auto ec_data = System::cmd_execute_and_capture_output(
-                Strings::format(R"(sha%ssum "%s")", digest_size, path.u8string()));
-            if (ec_data.exit_code == 0)
-            {
-                return parse_shasum_output(ec_data.output);
-            }
-        }
-
-        // Try shasum
-        {
-            const auto ec_data = System::cmd_execute_and_capture_output(
-                Strings::format(R"(shasum -a %s "%s")", digest_size, path.u8string()));
-            if (ec_data.exit_code == 0)
-            {
-                return parse_shasum_output(ec_data.output);
-            }
-        }
-
-        Checks::exit_with_message(VCPKG_LINE_INFO, "Could not hash file %s with %s", path.u8string(), hash_type);
-    }
-
-    std::string get_string_hash(const std::string& s, const std::string& hash_type)
-    {
-        const std::string digest_size = get_digest_size(hash_type);
-        verify_has_only_allowed_chars(s);
-
-        // Try hash-specific tools, like sha512sum
-        {
-            const auto ec_data =
-                System::cmd_execute_and_capture_output(Strings::format(R"(echo -n "%s" | sha%ssum)", s, digest_size));
-            if (ec_data.exit_code == 0)
-            {
-                return parse_shasum_output(ec_data.output);
-            }
-        }
-
-        // Try shasum
-        {
-            const auto ec_data = System::cmd_execute_and_capture_output(
-                Strings::format(R"(echo -n "%s" | shasum -a %s)", s, digest_size));
-            if (ec_data.exit_code == 0)
-            {
-                return parse_shasum_output(ec_data.output);
-            }
-        }
-
-        Checks::exit_with_message(VCPKG_LINE_INFO, "Could not hash input string with %s", hash_type);
-    }
-#endif
-#endif
 }
