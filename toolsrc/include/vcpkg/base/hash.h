@@ -6,8 +6,10 @@
 
 namespace vcpkg::Hash
 {
-    struct Algorithm {
-        enum Tag {
+    struct Algorithm
+    {
+        enum Tag
+        {
             Sha1,
             Sha256,
             Sha512,
@@ -19,28 +21,18 @@ namespace vcpkg::Hash
         constexpr Algorithm(Tag tag) : tag(tag) {}
     };
 
-    constexpr bool operator==(Algorithm lhs, Algorithm rhs) noexcept {
-        return lhs.tag == rhs.tag;
-    }
-    constexpr bool operator==(Algorithm lhs, Algorithm::Tag rhs) noexcept {
-        return lhs.tag == rhs;
-    }
-    constexpr bool operator==(Algorithm::Tag lhs, Algorithm rhs) noexcept {
-        return lhs == rhs.tag;
-    }
-    constexpr bool operator!=(Algorithm lhs, Algorithm rhs) noexcept {
-        return lhs.tag != rhs.tag;
-    }
-    constexpr bool operator!=(Algorithm lhs, Algorithm::Tag rhs) noexcept {
-        return lhs.tag != rhs;
-    }
-    constexpr bool operator!=(Algorithm::Tag lhs, Algorithm rhs) noexcept {
-        return lhs != rhs.tag;
-    }
+    constexpr bool operator==(Algorithm lhs, Algorithm rhs) noexcept { return lhs.tag == rhs.tag; }
+    constexpr bool operator==(Algorithm lhs, Algorithm::Tag rhs) noexcept { return lhs.tag == rhs; }
+    constexpr bool operator==(Algorithm::Tag lhs, Algorithm rhs) noexcept { return lhs == rhs.tag; }
+    constexpr bool operator!=(Algorithm lhs, Algorithm rhs) noexcept { return lhs.tag != rhs.tag; }
+    constexpr bool operator!=(Algorithm lhs, Algorithm::Tag rhs) noexcept { return lhs.tag != rhs; }
+    constexpr bool operator!=(Algorithm::Tag lhs, Algorithm rhs) noexcept { return lhs != rhs.tag; }
 
-    struct Hasher {
-        virtual void add_bytes(const void* start, const void* end) = 0;
-        virtual std::string get_hash() = 0;
+    struct Hasher
+    {
+        virtual void add_bytes(const void* start, const void* end) noexcept = 0;
+        virtual std::string get_hash() noexcept = 0;
+        virtual void clear() noexcept = 0;
         virtual ~Hasher() = default;
     };
 

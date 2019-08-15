@@ -101,7 +101,8 @@ namespace vcpkg::Commands::Hash
         const fs::path file_to_hash = args.command_arguments[0];
 
         auto algorithm = vcpkg::Hash::Algorithm{vcpkg::Hash::Algorithm::Sha512};
-        if (args.command_arguments.size() == 2) {
+        if (args.command_arguments.size() == 2)
+        {
             algorithm = vcpkg::Hash::Algorithm::from_string(args.command_arguments[1]).value_or_exit(VCPKG_LINE_INFO);
         }
 

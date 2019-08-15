@@ -39,6 +39,7 @@ namespace vcpkg
 
         std::string to_string() const;
         void to_string(std::string& out) const;
+
     private:
         const char* m_ptr = 0;
         size_t m_size = 0;

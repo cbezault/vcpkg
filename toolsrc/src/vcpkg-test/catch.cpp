@@ -7,5 +7,10 @@ int main(int argc, char** argv)
 {
     vcpkg::Debug::g_debugging = true;
 
-    return Catch::Session().run(argc, argv);
+    if (argc < 2) {
+        const char* my_argv[] = {".\\vcpkg.exe", "[sha256-expensive]"};
+        return Catch::Session().run(2, my_argv);
+    } else {
+        return Catch::Session().run(argc, argv);
+    }
 }
