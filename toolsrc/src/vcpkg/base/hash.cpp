@@ -400,19 +400,20 @@ namespace vcpkg::Hash
             using underlying_type = std::uint32_t;
             using message_length_type = std::uint64_t;
             constexpr static std::size_t chunk_size = 64; // = 512 / 8
+            constexpr static std::size_t number_of_rounds = 80;
 
             Sha1Algorithm() noexcept { clear(); }
 
             void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept
             {
-                /*
-                    this is 80 words long, but we only need 16 words back in
-                    order to calculate every value -- thus, we save stack by
-                    calculating 16 at a time, and always looking up mod 16
-                */
-                std::uint32_t words[16];
+                std::uint32_t words[80];
 
                 sha_fill_initial_words(&chunk[0], words);
+                for (std::size_t i = 16; i < number_of_rounds; ++i)
+                {
+                    const auto sum = words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i];
+                    words[i] = rol32(sum, 1);
+                }
 
                 std::uint32_t a = m_digest[0];
                 std::uint32_t b = m_digest[1];
@@ -420,14 +421,8 @@ namespace vcpkg::Hash
                 std::uint32_t d = m_digest[3];
                 std::uint32_t e = m_digest[4];
 
-                for (std::size_t i = 0; i < 80; ++i)
+                for (std::size_t i = 0; i < number_of_rounds; ++i)
                 {
-                    if (i >= 16)
-                    {
-                        const auto sum = words[(i + 13) & 0xF] ^ words[(i + 8) & 0xF] ^ words[(i + 2) & 0xF] ^ words[i & 0xF];
-                        words[i & 0xF] = rol32(sum, 1);
-                    }
-
                     std::uint32_t f;
                     std::uint32_t k;
 
@@ -452,7 +447,7 @@ namespace vcpkg::Hash
                         k = 0xCA62C1D6;
                     }
 
-                    auto tmp = rol32(a, 5) + f + e + k + words[i & 0xF];
+                    auto tmp = rol32(a, 5) + f + e + k + words[i];
                     e = d;
                     d = c;
                     c = rol32(b, 30);
@@ -494,53 +489,49 @@ namespace vcpkg::Hash
 
             void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept
             {
-                /*
-                    this is 64 words long, but we only need 16 words back in
-                    order to calculate every value -- thus, we save stack by
-                    calculating 16 at a time, and always looking up mod 16
-                */
-                std::uint32_t words[16];
+                std::uint32_t words[64];
 
                 sha_fill_initial_words(&chunk[0], words);
 
-                // these are in reverse so that we don't have to rotate the locals;
-                // we can just leave them in place as a circular buffer on i
+                for (std::size_t i = 16; i < number_of_rounds; ++i)
+                {
+                    const auto w0 = words[i - 15];
+                    const auto s0 = ror32(w0, 7) ^ ror32(w0, 18) ^ shr32(w0, 3);
+                    const auto w1 = words[i - 2];
+                    const auto s1 = ror32(w1, 17) ^ ror32(w1, 19) ^ shr32(w1, 10);
+                    words[i] = words[i - 16] + s0 + words[i - 7] + s1;
+                }
+
                 std::uint32_t local[8];
-                std::reverse_copy(begin(), end(), std::begin(local));
+                std::copy(begin(), end(), std::begin(local));
 
                 for (std::size_t i = 0; i < number_of_rounds; ++i)
                 {
-                    if (i >= 16) {
-                        const auto w0 = words[(i + 1) & 0xF];
-                        const auto s0 = ror32(w0, 7) ^ ror32(w0, 18) ^ shr32(w0, 3);
-                        const auto w1 = words[(i + 14) & 0xF];
-                        const auto s1 = ror32(w1, 17) ^ ror32(w1, 19) ^ shr32(w1, 10);
-                        words[i & 0xF] += s0 + words[(i + 9) & 0xF] + s1;
-                    }
-
-                    auto& h = local[i & 0x7];
-                    const auto g = local[(i + 1) & 0x7];
-                    const auto f = local[(i + 2) & 0x7];
-                    const auto e = local[(i + 3) & 0x7];
-                    auto& d = local[(i + 4) & 0x7];
-                    const auto c = local[(i + 5) & 0x7];
-                    const auto b = local[(i + 6) & 0x7];
-                    const auto a = local[(i + 7) & 0x7];
+                    const auto a = local[0];
+                    const auto b = local[1];
+                    const auto c = local[2];
 
                     const auto s0 = ror32(a, 2) ^ ror32(a, 13) ^ ror32(a, 22);
                     const auto maj = (a & b) ^ (a & c) ^ (b & c);
                     const auto tmp1 = s0 + maj;
 
-                    const auto s1 = ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25);
-                    const auto ch = (e & f) ^ (~e & g);
-                    const auto tmp2 = h + s1 + ch + round_constants[i] + words[i & 0xF];
+                    const auto e = local[4];
 
-                    d += tmp2;
-                    h = tmp1 + tmp2;
+                    const auto s1 = ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25);
+                    const auto ch = (e & local[5]) ^ (~e & local[6]);
+                    const auto tmp2 = local[7] + s1 + ch + round_constants[i] + words[i];
+
+                    for (std::size_t i = 7; i > 0; --i)
+                    {
+                        local[i] = local[i - 1];
+                    }
+                    local[4] += tmp2;
+                    local[0] = tmp1 + tmp2;
                 }
 
-                for (int i = 0; i < 8; ++i) {
-                    m_digest[i] += local[7 - i];
+                for (int i = 0; i < 8; ++i)
+                {
+                    m_digest[i] += local[i];
                 }
             }
 
@@ -584,27 +575,24 @@ namespace vcpkg::Hash
 
             void process_full_chunk(const std::array<uchar, chunk_size>& chunk) noexcept
             {
-                /*
-                    this is 80 words long, but we only need 16 words back in
-                    order to calculate every value -- thus, we save stack by
-                    calculating 16 at a time, and always looking up mod 16
-                */
-                std::uint64_t words[16];
+                std::uint64_t words[80];
 
                 sha_fill_initial_words(&chunk[0], words);
+
+                for (std::size_t i = 16; i < number_of_rounds; ++i)
+                {
+                    const auto w0 = words[i - 15];
+                    const auto s0 = ror64(w0, 1) ^ ror64(w0, 8) ^ shr64(w0, 7);
+                    const auto w1 = words[i - 2];
+                    const auto s1 = ror64(w1, 19) ^ ror64(w1, 61) ^ shr64(w1, 6);
+                    words[i] = words[i - 16] + s0 + words[i - 7] + s1;
+                }
 
                 std::uint64_t local[8];
                 std::copy(begin(), end(), std::begin(local));
 
                 for (std::size_t i = 0; i < number_of_rounds; ++i)
                 {
-                    if (i >= 16) {
-                        const auto w0 = words[(i + 1) & 0xF];
-                        const auto s0 = ror64(w0, 1) ^ ror64(w0, 8) ^ shr64(w0, 7);
-                        const auto w1 = words[(i + 14) & 0xF];
-                        const auto s1 = ror64(w1, 19) ^ ror64(w1, 61) ^ shr64(w1, 6);
-                        words[i & 0xF] += s0 + words[(i + 9) & 0xF] + s1;
-                    }
                     const auto a = local[0];
                     const auto b = local[1];
                     const auto c = local[2];
@@ -627,10 +615,10 @@ namespace vcpkg::Hash
                     local[0] = tmp0 + tmp1;
                 }
 
-                std::transform(
-                    std::begin(local), std::end(local), begin(), begin(), [](std::uint64_t lhs, std::uint64_t rhs) {
-                        return lhs + rhs;
-                    });
+                for (std::size_t i = 0; i < 8; ++i)
+                {
+                    m_digest[i] += local[i];
+                }
             }
 
             void clear() noexcept
