@@ -411,7 +411,7 @@ namespace vcpkg::Hash
                 sha_fill_initial_words(&chunk[0], words);
                 for (std::size_t i = 16; i < number_of_rounds; ++i)
                 {
-                    const auto sum = words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i];
+                    const auto sum = words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16];
                     words[i] = rol32(sum, 1);
                 }
 
@@ -605,7 +605,7 @@ namespace vcpkg::Hash
 
                     const auto s1 = ror64(e, 14) ^ ror64(e, 18) ^ ror64(e, 41);
                     const auto ch = (e & local[5]) ^ (~e & local[6]);
-                    const auto tmp1 = local[7] + s1 + ch + round_constants[i] + words[i & 0xF];
+                    const auto tmp1 = local[7] + s1 + ch + round_constants[i] + words[i];
 
                     for (std::size_t i = 7; i > 0; --i)
                     {

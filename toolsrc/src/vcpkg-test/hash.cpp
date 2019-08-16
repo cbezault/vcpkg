@@ -193,46 +193,87 @@ TEST_CASE ("SHA512: NIST test data (large 4)", "[.][hash-expensive][sha512-expen
 }
 
 #if defined(CATCH_CONFIG_ENABLE_BENCHMARKING)
+using Catch::Benchmark::Chronometer;
+void benchmark_hasher(Chronometer& meter, Hash::Hasher& hasher, std::uint64_t size, unsigned char byte) noexcept {
+    unsigned char buffer[1024];
+    std::fill(std::begin(buffer), std::end(buffer), byte);
+
+    meter.measure([&] {
+        hasher.clear();
+        std::uint64_t remaining = size;
+        while (remaining)
+        {
+            if (remaining < 512)
+            {
+                hasher.add_bytes(std::begin(buffer), std::begin(buffer) + remaining);
+                remaining = 0;
+            }
+            else
+            {
+                hasher.add_bytes(std::begin(buffer), std::end(buffer));
+                remaining -= 512;
+            }
+        }
+        hasher.get_hash();
+    });
+}
+
+TEST_CASE ("SHA1: large -- benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
+{
+    using Catch::Benchmark::Chronometer;
+
+    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha1);
+
+    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 1'000'000, 0);
+    };
+    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 0x2000'0000, 'Z');
+    };
+    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 0x4100'0000, 0);
+    };
+    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 0x6000'003E, 'B');
+    };
+}
+
 TEST_CASE ("SHA256: large -- benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
 {
     using Catch::Benchmark::Chronometer;
 
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
-    const auto hash = [&hasher](Chronometer& meter, std::uint64_t size, unsigned char byte) {
-        unsigned char buffer[1024];
-        std::fill(std::begin(buffer), std::end(buffer), byte);
-
-        meter.measure([&] {
-            hasher->clear();
-            std::uint64_t remaining = size;
-            while (remaining)
-            {
-                if (remaining < 512)
-                {
-                    hasher->add_bytes(std::begin(buffer), std::begin(buffer) + remaining);
-                    remaining = 0;
-                }
-                else
-                {
-                    hasher->add_bytes(std::begin(buffer), std::end(buffer));
-                    remaining -= 512;
-                }
-            }
-            hasher->get_hash();
-        });
-    };
 
     BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
-        hash(meter, 1'000'000, 0);
+        benchmark_hasher(meter, *hasher, 1'000'000, 0);
     };
     BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
-        hash(meter, 0x2000'0000, 'Z');
+        benchmark_hasher(meter, *hasher, 0x2000'0000, 'Z');
     };
     BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
-        hash(meter, 0x4100'0000, 0);
+        benchmark_hasher(meter, *hasher, 0x4100'0000, 0);
     };
     BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
-        hash(meter, 0x6000'003E, 'B');
+        benchmark_hasher(meter, *hasher, 0x6000'003E, 'B');
+    };
+}
+
+
+TEST_CASE ("SHA512: large -- benchmark", "[.][hash-expensive][sha512-expensive][!benchmark]")
+{
+    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
+
+    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 1'000'000, 0);
+    };
+    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 0x2000'0000, 'Z');
+    };
+    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 0x4100'0000, 0);
+    };
+    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
+        benchmark_hasher(meter, *hasher, 0x6000'003E, 'B');
     };
 }
 #endif
