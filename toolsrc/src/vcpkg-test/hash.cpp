@@ -70,6 +70,14 @@ TEST_CASE ("SHA1: basic tests", "[hash][sha1]")
                       "c69bcd30c196c7050906d212722dd7a7659aad04");
 }
 
+TEST_CASE ("SHA1: NIST test cases (small)", "[hash][sha1]")
+{
+    const auto algorithm = Hash::Algorithm::Sha1;
+
+    CHECK_HASH_STRING("abc", "A9993E364706816ABA3E25717850C26C9CD0D89D");
+    CHECK_HASH_STRING("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "84983E441C3BD26EBAAE4AA1F95129E5E54670F1");
+}
+
 TEST_CASE ("SHA256: basic tests", "[hash][sha256]")
 {
     const auto algorithm = Hash::Algorithm::Sha256;
@@ -82,7 +90,7 @@ TEST_CASE ("SHA256: basic tests", "[hash][sha256]")
                       "10c98034b424d4e40ca933bc524ea38b4e53290d76e8b38edc4ea2fec7f529aa");
 }
 
-TEST_CASE ("SHA256: NIST test data (small)", "[hash][sha256]")
+TEST_CASE ("SHA256: NIST test cases (small)", "[hash][sha256]")
 {
     const auto algorithm = Hash::Algorithm::Sha256;
 
@@ -100,7 +108,7 @@ TEST_CASE ("SHA256: NIST test data (small)", "[hash][sha256]")
     CHECK_HASH(1005, 'U', "f4d62ddec0f3dd90ea1380fa16a5ff8dc4c54b21740650f24afc4120903552b0");
 }
 
-TEST_CASE ("SHA512: NIST test data (small)", "[hash][sha512]")
+TEST_CASE ("SHA512: NIST test cases (small)", "[hash][sha512]")
 {
     const auto algorithm = Hash::Algorithm::Sha512;
 
@@ -138,54 +146,30 @@ TEST_CASE ("SHA512: NIST test data (small)", "[hash][sha512]")
                "1161798015052893a48c3d161");
 }
 
-TEST_CASE ("SHA256: NIST test data (large 1)", "[.][hash-expensive][sha256-expensive]")
+TEST_CASE ("SHA256: NIST test cases (large)", "[.][hash-expensive][sha256-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(1'000'000, 0, "d29751f2649b32ff572b5e0a9f541ea660a50f94ff0beedfb0b692b924cc8025");
-}
-TEST_CASE ("SHA256: NIST test data (large 2)", "[.][hash-expensive][sha256-expensive]")
-{
-    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(0x2000'0000, 'Z', "15a1868c12cc53951e182344277447cd0979536badcc512ad24c67e9b2d4f3dd");
-}
-TEST_CASE ("SHA256: NIST test data (large 3)", "[.][hash-expensive][sha256-expensive]")
-{
-    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(0x4100'0000, 0, "461c19a93bd4344f9215f5ec64357090342bc66b15a148317d276e31cbc20b53");
-}
-TEST_CASE ("SHA256: NIST test data (large 4)", "[.][hash-expensive][sha256-expensive]")
-{
-    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
     CHECK_HASH_LARGE(0x6000'003E, 'B', "c23ce8a7895f4b21ec0daf37920ac0a262a220045a03eb2dfed48ef9b05aabea");
 }
 
-TEST_CASE ("SHA512: NIST test data (large 1)", "[.][hash-expensive][sha512-expensive]")
+TEST_CASE ("SHA512: NIST test cases (large)", "[.][hash-expensive][sha512-expensive]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(1'000'000,
                      0,
                      "ce044bc9fd43269d5bbc946cbebc3bb711341115cc4abdf2edbc3ff2c57ad4b15deb699bda257fea5aef9c6e55fcf4cf9"
                      "dc25a8c3ce25f2efe90908379bff7ed");
-}
-TEST_CASE ("SHA512: NIST test data (large 2)", "[.][hash-expensive][sha512-expensive]")
-{
-    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(0x2000'0000,
                      'Z',
                      "da172279f3ebbda95f6b6e1e5f0ebec682c25d3d93561a1624c2fa9009d64c7e9923f3b46bcaf11d39a531f43297992ba"
                      "4155c7e827bd0f1e194ae7ed6de4cac");
-}
-TEST_CASE ("SHA512: NIST test data (large 3)", "[.][hash-expensive][sha512-expensive]")
-{
-    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(0x4100'0000,
                      0,
                      "14b1be901cb43549b4d831e61e5f9df1c791c85b50e85f9d6bc64135804ad43ce8402750edbe4e5c0fc170b99cf78b9f4"
                      "ecb9c7e02a157911d1bd1832d76784f");
-}
-TEST_CASE ("SHA512: NIST test data (large 4)", "[.][hash-expensive][sha512-expensive]")
-{
-    auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
     CHECK_HASH_LARGE(0x6000'003E,
                      'B',
                      "fd05e13eb771f05190bd97d62647157ea8f1f6949a52bb6daaedbad5f578ec59b1b8d6c4a7ecb2feca6892b4dc1387716"
@@ -218,7 +202,7 @@ void benchmark_hasher(Chronometer& meter, Hash::Hasher& hasher, std::uint64_t si
     });
 }
 
-TEST_CASE ("SHA1: large -- benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
+TEST_CASE ("SHA1: benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
 {
     using Catch::Benchmark::Chronometer;
 
@@ -238,7 +222,7 @@ TEST_CASE ("SHA1: large -- benchmark", "[.][hash-expensive][sha256-expensive][!b
     };
 }
 
-TEST_CASE ("SHA256: large -- benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
+TEST_CASE ("SHA256: benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
 {
     using Catch::Benchmark::Chronometer;
 
