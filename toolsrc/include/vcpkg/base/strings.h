@@ -17,6 +17,12 @@ namespace vcpkg::Strings::details
         return t.to_string();
     }
 
+    template<class T>
+    auto to_printf_arg(const T& t) -> decltype(to_string(t))
+    {
+        return to_string(t);
+    }
+
     inline const char* to_printf_arg(const std::string& s) { return s.c_str(); }
 
     inline const char* to_printf_arg(const char* s) { return s; }

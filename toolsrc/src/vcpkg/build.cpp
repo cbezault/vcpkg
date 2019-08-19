@@ -626,7 +626,7 @@ namespace vcpkg::Build
         {
             if (fs::is_regular_file(fs.status(VCPKG_LINE_INFO, port_file)))
             {
-                hashes_files.emplace_back(vcpkg::Hash::get_file_hash(fs, port_file, "SHA1"),
+                hashes_files.emplace_back(Hash::get_file_hash(fs, port_file, Hash::Algorithm::Sha1),
                                           port_file.path().filename().u8string());
 
                 if (hashes_files.size() > max_port_file_count)
@@ -655,9 +655,10 @@ namespace vcpkg::Build
         abi_tag_entries.emplace_back(AbiEntry{"powershell", paths.get_tool_version("powershell-core")});
 #endif
 
-        abi_tag_entries.emplace_back(AbiEntry{
-            "vcpkg_fixup_cmake_targets",
-            vcpkg::Hash::get_file_hash(fs, paths.scripts / "cmake" / "vcpkg_fixup_cmake_targets.cmake", Hash::Algorithm::Sha1)});
+        abi_tag_entries.emplace_back(
+            AbiEntry{"vcpkg_fixup_cmake_targets",
+                     vcpkg::Hash::get_file_hash(
+                         fs, paths.scripts / "cmake" / "vcpkg_fixup_cmake_targets.cmake", Hash::Algorithm::Sha1)});
 
         abi_tag_entries.emplace_back(AbiEntry{"triplet", pre_build_info.triplet_abi_tag});
 
@@ -666,9 +667,10 @@ namespace vcpkg::Build
 
         if (pre_build_info.public_abi_override)
         {
-            abi_tag_entries.emplace_back(AbiEntry{
-                "public_abi_override",
-                Hash::get_string_hash(pre_build_info.public_abi_override.value_or_exit(VCPKG_LINE_INFO), "SHA1")});
+            abi_tag_entries.emplace_back(
+                AbiEntry{"public_abi_override",
+                         Hash::get_string_hash(pre_build_info.public_abi_override.value_or_exit(VCPKG_LINE_INFO),
+                                               Hash::Algorithm::Sha1)});
         }
 
         if (config.build_package_options.use_head_version == UseHeadVersion::YES)

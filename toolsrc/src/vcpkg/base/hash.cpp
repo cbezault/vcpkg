@@ -15,7 +15,7 @@
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #endif
 
-#define USE_BCRYPT_HASHER 0
+#define USE_BCRYPT_HASHER 1
 #else
 #define USE_BCRYPT_HASHER 0
 #endif
@@ -24,7 +24,7 @@ namespace vcpkg::Hash
 {
     using uchar = unsigned char;
 
-    Optional<Algorithm> Algorithm::from_string(StringView sv)
+    Optional<Algorithm> algorithm_from_string(StringView sv)
     {
         if (Strings::case_insensitive_ascii_equals(sv, "SHA1"))
         {
@@ -42,13 +42,13 @@ namespace vcpkg::Hash
         return {};
     }
 
-    StringLiteral Algorithm::to_string() const
+    const char* to_string(Algorithm algo)
     {
-        switch (tag)
+        switch (algo)
         {
-            case Algorithm::Sha1: return "Sha1";
-            case Algorithm::Sha256: return "Sha256";
-            case Algorithm::Sha512: return "Sha512";
+            case Algorithm::Sha1: return "SHA1";
+            case Algorithm::Sha256: return "SHA256";
+            case Algorithm::Sha512: return "SHA512";
             default: vcpkg::Checks::exit_fail(VCPKG_LINE_INFO);
         }
     }
@@ -125,16 +125,6 @@ namespace vcpkg::Hash
 
     uchar operator&(UInt128 lhs, uchar rhs) noexcept { return lhs.bottom & rhs; }
 
-    static void verify_has_only_allowed_chars(const std::string& s)
-    {
-        static const std::regex ALLOWED_CHARS{"^[a-zA-Z0-9-]*$"};
-        Checks::check_exit(VCPKG_LINE_INFO,
-                           std::regex_match(s, ALLOWED_CHARS),
-                           "Only alphanumeric chars and dashes are currently allowed. String was:\n"
-                           "    % s",
-                           s);
-    }
-
     template<class T>
     void top_bits(T) = delete;
 
@@ -185,7 +175,7 @@ namespace vcpkg::Hash
         {
             explicit BCryptHasher(Algorithm algo) noexcept
             {
-                switch (algo.tag)
+                switch (algo)
                 {
                     case Algorithm::Sha1: alg_handle = BCRYPT_SHA1_ALG_HANDLE; break;
                     case Algorithm::Sha256: alg_handle = BCRYPT_SHA256_ALG_HANDLE; break;
@@ -351,13 +341,13 @@ namespace vcpkg::Hash
                 {
                     // not enough space to add the message length
                     // just resize and process full chunk
-                    std::fill(chunk_begin(), m_chunk.end(), 0);
+                    std::fill(chunk_begin(), m_chunk.end(), static_cast<uchar>(0));
                     m_impl.process_full_chunk(m_chunk);
                     m_current_chunk_size = 0;
                 }
 
                 const auto before_length = m_chunk.end() - sizeof(m_message_length);
-                std::fill(chunk_begin(), before_length, 0);
+                std::fill(chunk_begin(), before_length, static_cast<uchar>(0));
                 std::generate(before_length, m_chunk.end(), [length = message_length]() mutable {
                     const auto result = top_bits(length);
                     length <<= 8;
@@ -521,15 +511,15 @@ namespace vcpkg::Hash
                     const auto ch = (e & local[5]) ^ (~e & local[6]);
                     const auto tmp2 = local[7] + s1 + ch + round_constants[i] + words[i];
 
-                    for (std::size_t i = 7; i > 0; --i)
+                    for (std::size_t j = 7; j > 0; --j)
                     {
-                        local[i] = local[i - 1];
+                        local[j] = local[j - 1];
                     }
                     local[4] += tmp2;
                     local[0] = tmp1 + tmp2;
                 }
 
-                for (int i = 0; i < 8; ++i)
+                for (std::size_t i = 0; i < 8; ++i)
                 {
                     m_digest[i] += local[i];
                 }
@@ -607,9 +597,9 @@ namespace vcpkg::Hash
                     const auto ch = (e & local[5]) ^ (~e & local[6]);
                     const auto tmp1 = local[7] + s1 + ch + round_constants[i] + words[i];
 
-                    for (std::size_t i = 7; i > 0; --i)
+                    for (std::size_t j = 7; j > 0; --j)
                     {
-                        local[i] = local[i - 1];
+                        local[j] = local[j - 1];
                     }
                     local[4] += tmp1;
                     local[0] = tmp0 + tmp1;
@@ -664,7 +654,7 @@ namespace vcpkg::Hash
 #if USE_BCRYPT_HASHER
         return std::make_unique<BCryptHasher>(algo);
 #else
-        switch (algo.tag)
+        switch (algo)
         {
             case Algorithm::Sha1: return std::make_unique<ShaHasher<Sha1Algorithm>>();
             case Algorithm::Sha256: return std::make_unique<ShaHasher<Sha256Algorithm>>();
@@ -718,6 +708,7 @@ namespace vcpkg::Hash
 
     std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, Algorithm algo)
     {
+        Util::unused(fs, path, algo);
         vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "aww");
     }
 }

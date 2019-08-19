@@ -1,4 +1,4 @@
-#include <vcpkg-test/catch.h>
+#include <catch2/catch.hpp>
 
 #include <vcpkg/base/hash.h>
 
@@ -14,8 +14,8 @@ using vcpkg::StringView;
 #define CHECK_HASH(size, value, real_hash)                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        unsigned char data[size];                                                                                       \
-        std::fill(std::begin(data), std::end(data), value);                                                            \
+        unsigned char data[size];                                                                                      \
+        std::fill(std::begin(data), std::end(data), static_cast<unsigned char>(value));                                \
         const auto hash = Hash::get_bytes_hash(data, data + size, algorithm);                                          \
         REQUIRE(hash == real_hash);                                                                                    \
     } while (0)
@@ -39,9 +39,9 @@ using vcpkg::StringView;
     do                                                                                                                 \
     {                                                                                                                  \
         hasher->clear();                                                                                               \
-        std::uint64_t remaining = size;                                                                                  \
-        unsigned char buffer[512];                                                                                      \
-        std::fill(std::begin(buffer), std::end(buffer), value);                                                        \
+        std::uint64_t remaining = size;                                                                                \
+        unsigned char buffer[512];                                                                                     \
+        std::fill(std::begin(buffer), std::end(buffer), static_cast<unsigned char>(value));                            \
         while (remaining)                                                                                              \
         {                                                                                                              \
             if (remaining < 512)                                                                                       \
@@ -74,8 +74,9 @@ TEST_CASE ("SHA1: NIST test cases (small)", "[hash][sha1]")
 {
     const auto algorithm = Hash::Algorithm::Sha1;
 
-    CHECK_HASH_STRING("abc", "A9993E364706816ABA3E25717850C26C9CD0D89D");
-    CHECK_HASH_STRING("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "84983E441C3BD26EBAAE4AA1F95129E5E54670F1");
+    CHECK_HASH_STRING("abc", "a9993e364706816aba3e25717850c26c9cd0d89d");
+    CHECK_HASH_STRING("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                      "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
 }
 
 TEST_CASE ("SHA256: basic tests", "[hash][sha256]")
@@ -178,7 +179,8 @@ TEST_CASE ("SHA512: NIST test cases (large)", "[.][hash-expensive][sha512-expens
 
 #if defined(CATCH_CONFIG_ENABLE_BENCHMARKING)
 using Catch::Benchmark::Chronometer;
-void benchmark_hasher(Chronometer& meter, Hash::Hasher& hasher, std::uint64_t size, unsigned char byte) noexcept {
+void benchmark_hasher(Chronometer& meter, Hash::Hasher& hasher, std::uint64_t size, unsigned char byte) noexcept
+{
     unsigned char buffer[1024];
     std::fill(std::begin(buffer), std::end(buffer), byte);
 
@@ -202,61 +204,72 @@ void benchmark_hasher(Chronometer& meter, Hash::Hasher& hasher, std::uint64_t si
     });
 }
 
-TEST_CASE ("SHA1: benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
+TEST_CASE ("SHA1: benchmark", "[.][hash][sha256][!benchmark]")
 {
     using Catch::Benchmark::Chronometer;
 
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha1);
 
-    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 1'000'000, 0);
     };
-    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x2000'0000, 'Z');
     };
-    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x4100'0000, 0);
     };
-    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x6000'003E, 'B');
     };
 }
 
-TEST_CASE ("SHA256: benchmark", "[.][hash-expensive][sha256-expensive][!benchmark]")
+TEST_CASE ("SHA256: benchmark", "[.][hash][sha256][!benchmark]")
 {
     using Catch::Benchmark::Chronometer;
 
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha256);
 
-    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 1'000'000, 0);
     };
-    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x2000'0000, 'Z');
     };
-    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x4100'0000, 0);
     };
-    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x6000'003E, 'B');
     };
 }
 
-
-TEST_CASE ("SHA512: large -- benchmark", "[.][hash-expensive][sha512-expensive][!benchmark]")
+TEST_CASE ("SHA512: large -- benchmark", "[.][hash][sha512][!benchmark]")
 {
     auto hasher = Hash::get_hasher_for(Hash::Algorithm::Sha512);
 
-    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("0 x 1'000'000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 1'000'000, 0);
     };
-    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("'Z' x 0x2000'0000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x2000'0000, 'Z');
     };
-    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("0 x 0x4100'0000")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x4100'0000, 0);
     };
-    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter) {
+    BENCHMARK_ADVANCED("'B' x 0x6000'003E")(Catch::Benchmark::Chronometer meter)
+    {
         benchmark_hasher(meter, *hasher, 0x6000'003E, 'B');
     };
 }

@@ -6,27 +6,15 @@
 
 namespace vcpkg::Hash
 {
-    struct Algorithm
+    enum class Algorithm
     {
-        enum Tag
-        {
-            Sha1,
-            Sha256,
-            Sha512,
-        } tag;
-
-        StringLiteral to_string() const;
-        static Optional<Algorithm> from_string(StringView sv);
-
-        constexpr Algorithm(Tag tag) : tag(tag) {}
+        Sha1,
+        Sha256,
+        Sha512,
     };
 
-    constexpr bool operator==(Algorithm lhs, Algorithm rhs) noexcept { return lhs.tag == rhs.tag; }
-    constexpr bool operator==(Algorithm lhs, Algorithm::Tag rhs) noexcept { return lhs.tag == rhs; }
-    constexpr bool operator==(Algorithm::Tag lhs, Algorithm rhs) noexcept { return lhs == rhs.tag; }
-    constexpr bool operator!=(Algorithm lhs, Algorithm rhs) noexcept { return lhs.tag != rhs.tag; }
-    constexpr bool operator!=(Algorithm lhs, Algorithm::Tag rhs) noexcept { return lhs.tag != rhs; }
-    constexpr bool operator!=(Algorithm::Tag lhs, Algorithm rhs) noexcept { return lhs != rhs.tag; }
+    const char* to_string(Algorithm algo);
+    Optional<Algorithm> algorithm_from_string(StringView sv);
 
     struct Hasher
     {

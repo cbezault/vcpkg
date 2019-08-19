@@ -103,7 +103,7 @@ namespace vcpkg::Commands::Hash
         auto algorithm = vcpkg::Hash::Algorithm{vcpkg::Hash::Algorithm::Sha512};
         if (args.command_arguments.size() == 2)
         {
-            algorithm = vcpkg::Hash::Algorithm::from_string(args.command_arguments[1]).value_or_exit(VCPKG_LINE_INFO);
+            algorithm = vcpkg::Hash::algorithm_from_string(args.command_arguments[1]).value_or_exit(VCPKG_LINE_INFO);
         }
 
         const std::string hash = vcpkg::Hash::get_file_hash(paths.get_filesystem(), file_to_hash, algorithm);
