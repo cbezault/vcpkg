@@ -17,7 +17,7 @@ namespace vcpkg::Strings::details
         return t.to_string();
     }
 
-    template<class T>
+    template<class T, class = std::enable_if_t<!std::is_arithmetic<T>::value>>
     auto to_printf_arg(const T& t) -> decltype(to_string(t))
     {
         return to_string(t);

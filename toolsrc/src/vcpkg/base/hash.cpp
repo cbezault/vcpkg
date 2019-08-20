@@ -191,9 +191,15 @@ namespace vcpkg::Hash
                 // BCryptHashData takes its input as non-const, but does not modify it
                 uchar* start = const_cast<uchar*>(static_cast<const uchar*>(start_));
                 const uchar* end = static_cast<const uchar*>(end_);
+                Checks::check_exit(VCPKG_LINE_INFO, end - start >= 0);
 
-                vcpkg::Checks::check_exit(VCPKG_LINE_INFO, end - start >= 0);
-                vcpkg::Checks::check_exit(VCPKG_LINE_INFO, end - start < std::numeric_limits<unsigned long>::max());
+                // only matters on 64-bit -- BCryptHasher takes an unsigned long
+                // length, so if you have an array bigger than 2**32-1 elements,
+                // you have a problem.
+                if (sizeof(end - start) > sizeof(unsigned long)) {
+                    constexpr auto max = static_cast<std::ptrdiff_t>(std::numeric_limits<unsigned long>::max());
+                    Checks::check_exit(VCPKG_LINE_INFO, end - start <= max);
+                }
 
                 const auto length = static_cast<unsigned long>(end - start);
                 const NTSTATUS error_code = BCryptHashData(hash_handle, start, length, 0);
