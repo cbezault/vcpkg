@@ -2,7 +2,7 @@ name: Label Top Issues
 
 on:
   schedule:
-  - cron:  '15 0-23 * * *'
+  - cron:  '* * * * *'
 
 jobs:
   labelTopIssues:
