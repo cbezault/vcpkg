@@ -23,6 +23,7 @@ namespace vcpkg
         static const std::string MAINTAINER = "Maintainer";
         static const std::string DEPENDS = "Depends";
         static const std::string DEFAULTFEATURES = "Default-Features";
+        static const std::string TYPE = "Type";
     }
 
     BinaryParagraph::BinaryParagraph() = default;
@@ -67,19 +68,25 @@ namespace vcpkg
             Checks::exit_fail(VCPKG_LINE_INFO);
         }
 
+        this->type = Type::from_string(parser.optional_field(Fields::TYPE));
+
         // prefer failing above when possible because it gives better information
         Checks::check_exit(VCPKG_LINE_INFO, multi_arch == "same", "Multi-Arch must be 'same' but was %s", multi_arch);
     }
 
     BinaryParagraph::BinaryParagraph(const SourceParagraph& spgh, const Triplet& triplet, const std::string& abi_tag)
-        : version(spgh.version), description(spgh.description), maintainer(spgh.maintainer), abi(abi_tag)
+        : version(spgh.version)
+        , description(spgh.description)
+        , maintainer(spgh.maintainer)
+        , abi(abi_tag)
+        , type(spgh.type)
     {
         this->spec = PackageSpec::from_name_and_triplet(spgh.name, triplet).value_or_exit(VCPKG_LINE_INFO);
         this->depends = filter_dependencies(spgh.depends, triplet);
     }
 
     BinaryParagraph::BinaryParagraph(const SourceParagraph& spgh, const FeatureParagraph& fpgh, const Triplet& triplet)
-        : version(), description(fpgh.description), maintainer(), feature(fpgh.name)
+        : version(), description(fpgh.description), maintainer(), feature(fpgh.name), type(spgh.type)
     {
         this->spec = PackageSpec::from_name_and_triplet(spgh.name, triplet).value_or_exit(VCPKG_LINE_INFO);
         this->depends = filter_dependencies(fpgh.depends, triplet);
@@ -119,5 +126,7 @@ namespace vcpkg
         if (!pgh.maintainer.empty()) out_str.append("Maintainer: ").append(pgh.maintainer).push_back('\n');
         if (!pgh.abi.empty()) out_str.append("Abi: ").append(pgh.abi).push_back('\n');
         if (!pgh.description.empty()) out_str.append("Description: ").append(pgh.description).push_back('\n');
+
+        out_str.append("Type: ").append(Type::to_string(pgh.type)).push_back('\n');
     }
 }

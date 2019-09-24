@@ -4,6 +4,7 @@
 #include <vcpkg/base/system.print.h>
 #include <vcpkg/base/util.h>
 #include <vcpkg/build.h>
+#include <vcpkg/cmakevars.h>
 #include <vcpkg/commands.h>
 #include <vcpkg/dependencies.h>
 #include <vcpkg/globalstate.h>
@@ -337,8 +338,11 @@ namespace vcpkg::Install
 
             auto result = [&]() -> Build::ExtendedBuildResult {
                 const auto& scfl = action.source_control_file_location.value_or_exit(VCPKG_LINE_INFO);
-                const Build::BuildPackageConfig build_config{
-                    scfl, action.spec.triplet(), action.build_options, action.feature_list};
+                const Build::BuildPackageConfig build_config{scfl,
+                                                             action.spec.triplet(),
+                                                             action.build_options,
+                                                             action.feature_list,
+                                                             action.cmake_vars.value_or_exit(VCPKG_LINE_INFO)};
                 return Build::build_package(paths, build_config, status_db);
             }();
 
@@ -657,10 +661,11 @@ namespace vcpkg::Install
 
         //// Load ports from ports dirs
         PathsPortFileProvider provider(paths, args.overlay_ports.get());
+        CMakeVarProvider var_provider(paths, provider);
 
         // Note: action_plan will hold raw pointers to SourceControlFileLocations from this map
         std::vector<AnyAction> action_plan =
-            create_feature_install_plan(provider, FullPackageSpec::to_feature_specs(specs), status_db);
+            create_feature_install_plan(provider, var_provider, FullPackageSpec::to_feature_specs(specs), status_db);
 
         for (auto&& action : action_plan)
         {

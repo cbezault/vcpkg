@@ -7,6 +7,7 @@
 #include <vcpkg/dependencies.h>
 #include <vcpkg/packagespec.h>
 #include <vcpkg/paragraphs.h>
+#include <vcpkg/portfileprovider.h>
 #include <vcpkg/statusparagraphs.h>
 #include <vcpkg/vcpkglib.h>
 #include <vcpkg/vcpkgpaths.h>
@@ -24,7 +25,8 @@ namespace vcpkg::Dependencies
 
         struct ClusterSource
         {
-            const SourceControlFileLocation* scfl = nullptr;
+            const SourceControlFileLocation& scfl;
+            const std::unordered_map<std::string, std::string>& cmakevars;
             std::unordered_map<std::string, std::vector<FeatureSpec>> build_edges;
         };
 
@@ -82,7 +84,11 @@ namespace vcpkg::Dependencies
     /// </summary>
     struct ClusterGraph : Util::MoveOnlyBase
     {
-        explicit ClusterGraph(const PortFileProvider& provider) : m_provider(provider) {}
+        explicit ClusterGraph(const PortFileProvider::PortFileProvider& port_provider,
+                              const CMakeVars::CMakeVarProvider& var_provider)
+            : m_port_provider(port_provider), m_var_provider(var_provider)
+        {
+        }
 
         /// <summary>
         ///     Find the cluster associated with spec or if not found, create it from the PortFileProvider.
@@ -94,35 +100,42 @@ namespace vcpkg::Dependencies
             auto it = m_graph.find(spec);
             if (it == m_graph.end())
             {
-                // Load on-demand from m_provider
-                auto maybe_scfl = m_provider.get_control_file(spec.name());
+                // Load on-demand from m_port_provider and m_var_provider
+                const SourceControlFileLocation& scfl =
+                    m_port_provider.get_control_file(spec.name()).value_or_exit(VCPKG_LINE_INFO);
+                const std::unordered_map<std::string, std::string>& cmakevars = m_var_provider.get_cmake_vars(spec);
+
                 auto& clust = m_graph[spec];
                 clust.spec = spec;
-                if (auto p_scfl = maybe_scfl.get())
-                {
-                    clust.source = cluster_from_scf(*p_scfl, clust.spec.triplet());
-                }
+                clust.source = cluster_from_scf(scfl, cmakevars, clust.spec.triplet());
+
                 return clust;
             }
             return it->second;
         }
 
     private:
-        static ClusterSource cluster_from_scf(const SourceControlFileLocation& scfl, Triplet t)
+        static ClusterSource cluster_from_scf(const SourceControlFileLocation& scfl,
+                                              const std::unordered_map<std::string, std::string>& cmakevars,
+                                              Triplet t)
         {
-            ClusterSource ret;
-            ret.build_edges.emplace("core",
-                                    filter_dependencies_to_specs(scfl.source_control_file->core_paragraph->depends, t));
+            return {scfl, cmakevars, [&]() {
+                        std::vector<std::pair<std::string, std::vector<FeatureSpec>>> build_edges;
 
-            for (const auto& feature : scfl.source_control_file->feature_paragraphs)
-                ret.build_edges.emplace(feature->name, filter_dependencies_to_specs(feature->depends, t));
+                        build_edges.emplace_back(
+                            "core", filter_dependencies_to_specs(scfl.source_control_file->core_paragraph->depends, t));
 
-            ret.scfl = &scfl;
-            return ret;
+                        for (const auto& feature : scfl.source_control_file->feature_paragraphs)
+                            build_edges.emplace_back(feature->name, filter_dependencies_to_specs(feature->depends, t));
+
+                        return std::unordered_map<std::string, std::vector<FeatureSpec>>{
+                            std::make_move_iterator(build_edges.begin()), std::make_move_iterator(build_edges.end())};
+                    }()};
         }
 
         std::unordered_map<PackageSpec, Cluster> m_graph;
-        const PortFileProvider& m_provider;
+        const PortFileProvider::PortFileProvider& m_port_provider;
+        const CMakeVars::CMakeVarProvider& m_var_provider;
     };
 
     static std::string to_output_string(RequestType request_type,
@@ -178,11 +191,13 @@ namespace vcpkg::Dependencies
 
     InstallPlanAction::InstallPlanAction(const PackageSpec& spec,
                                          const SourceControlFileLocation& scfl,
+                                         const std::unordered_map<std::string, std::string>& cmakevars,
                                          const std::set<std::string>& features,
                                          const RequestType& request_type,
                                          std::vector<PackageSpec>&& dependencies)
         : spec(spec)
         , source_control_file_location(scfl)
+        , cmakevars(cmakevars)
         , plan_type(InstallPlanType::BUILD_AND_INSTALL)
         , request_type(request_type)
         , build_options{}
@@ -292,145 +307,6 @@ namespace vcpkg::Dependencies
     bool RemovePlanAction::compare_by_name(const RemovePlanAction* left, const RemovePlanAction* right)
     {
         return left->spec.name() < right->spec.name();
-    }
-
-    MapPortFileProvider::MapPortFileProvider(const std::unordered_map<std::string, SourceControlFileLocation>& map)
-        : ports(map)
-    {
-    }
-
-    Optional<const SourceControlFileLocation&> MapPortFileProvider::get_control_file(const std::string& spec) const
-    {
-        auto scf = ports.find(spec);
-        if (scf == ports.end()) return nullopt;
-        return scf->second;
-    }
-
-    std::vector<const SourceControlFileLocation*> MapPortFileProvider::load_all_control_files() const
-    {
-        return Util::fmap(ports, [](auto&& kvpair) -> const SourceControlFileLocation* { return &kvpair.second; });
-    }
-
-    PathsPortFileProvider::PathsPortFileProvider(const vcpkg::VcpkgPaths& paths,
-                                                 const std::vector<std::string>* ports_dirs_paths)
-        : filesystem(paths.get_filesystem())
-    {
-        auto& fs = Files::get_real_filesystem();
-        if (ports_dirs_paths)
-        {
-            for (auto&& overlay_path : *ports_dirs_paths)
-            {
-                if (!overlay_path.empty())
-                {
-                    auto overlay = fs::stdfs::canonical(fs::u8path(overlay_path));
-
-                    Checks::check_exit(VCPKG_LINE_INFO,
-                                       filesystem.exists(overlay),
-                                       "Error: Path \"%s\" does not exist",
-                                       overlay.string());
-
-                    Checks::check_exit(VCPKG_LINE_INFO,
-                                       fs::is_directory(fs.status(VCPKG_LINE_INFO, overlay)),
-                                       "Error: Path \"%s\" must be a directory",
-                                       overlay.string());
-
-                    ports_dirs.emplace_back(overlay);
-                }
-            }
-        }
-        ports_dirs.emplace_back(paths.ports);
-    }
-
-    Optional<const SourceControlFileLocation&> PathsPortFileProvider::get_control_file(const std::string& spec) const
-    {
-        auto cache_it = cache.find(spec);
-        if (cache_it != cache.end())
-        {
-            return cache_it->second;
-        }
-
-        for (auto&& ports_dir : ports_dirs)
-        {
-            // Try loading individual port
-            if (filesystem.exists(ports_dir / "CONTROL"))
-            {
-                auto maybe_scf = Paragraphs::try_load_port(filesystem, ports_dir);
-                if (auto scf = maybe_scf.get())
-                {
-                    if (scf->get()->core_paragraph->name == spec)
-                    {
-                        SourceControlFileLocation scfl{std::move(*scf), ports_dir};
-                        auto it = cache.emplace(spec, std::move(scfl));
-                        return it.first->second;
-                    }
-                }
-                else
-                {
-                    vcpkg::print_error_message(maybe_scf.error());
-                    Checks::exit_with_message(
-                        VCPKG_LINE_INFO, "Error: Failed to load port from %s", spec, ports_dir.u8string());
-                }
-            }
-
-            auto found_scf = Paragraphs::try_load_port(filesystem, ports_dir / spec);
-            if (auto scf = found_scf.get())
-            {
-                if (scf->get()->core_paragraph->name == spec)
-                {
-                    SourceControlFileLocation scfl{std::move(*scf), ports_dir / spec};
-                    auto it = cache.emplace(spec, std::move(scfl));
-                    return it.first->second;
-                }
-            }
-        }
-
-        return nullopt;
-    }
-
-    std::vector<const SourceControlFileLocation*> PathsPortFileProvider::load_all_control_files() const
-    {
-        // Reload cache with ports contained in all ports_dirs
-        cache.clear();
-        std::vector<const SourceControlFileLocation*> ret;
-        for (auto&& ports_dir : ports_dirs)
-        {
-            // Try loading individual port
-            if (filesystem.exists(ports_dir / "CONTROL"))
-            {
-                auto maybe_scf = Paragraphs::try_load_port(filesystem, ports_dir);
-                if (auto scf = maybe_scf.get())
-                {
-                    auto port_name = scf->get()->core_paragraph->name;
-                    if (cache.find(port_name) == cache.end())
-                    {
-                        SourceControlFileLocation scfl{std::move(*scf), ports_dir};
-                        auto it = cache.emplace(port_name, std::move(scfl));
-                        ret.emplace_back(&it.first->second);
-                    }
-                }
-                else
-                {
-                    vcpkg::print_error_message(maybe_scf.error());
-                    Checks::exit_with_message(
-                        VCPKG_LINE_INFO, "Error: Failed to load port from %s", ports_dir.u8string());
-                }
-                continue;
-            }
-
-            // Try loading all ports inside ports_dir
-            auto found_scf = Paragraphs::load_all_ports(filesystem, ports_dir);
-            for (auto&& scf : found_scf)
-            {
-                auto port_name = scf->core_paragraph->name;
-                if (cache.find(port_name) == cache.end())
-                {
-                    SourceControlFileLocation scfl{std::move(scf), ports_dir / port_name};
-                    auto it = cache.emplace(port_name, std::move(scfl));
-                    ret.emplace_back(&it.first->second);
-                }
-            }
-        }
-        return ret;
     }
 
     std::vector<RemovePlanAction> create_remove_plan(const std::vector<PackageSpec>& specs,
@@ -629,7 +505,7 @@ namespace vcpkg::Dependencies
                 VCPKG_LINE_INFO, "Error: Cannot find definition for package `%s`.", cluster.spec.name());
         }
 
-        auto&& control_file = *p_source->scfl->source_control_file.get();
+        auto&& control_file = *p_source->scfl.source_control_file.get();
         if (feature.empty())
         {
             // Add default features for this package. This is an exact reference, so ignore prevent_default_features.
@@ -726,7 +602,7 @@ namespace vcpkg::Dependencies
 
             // Check if any default features have been added
             auto& previous_df = p_installed->ipv.core->package.default_features;
-            auto&& control_file = *p_source->scfl->source_control_file.get();
+            auto&& control_file = *p_source->scfl.source_control_file.get();
             for (auto&& default_feature : control_file.core_paragraph->default_features)
             {
                 if (std::find(previous_df.begin(), previous_df.end(), default_feature) == previous_df.end())
@@ -745,7 +621,8 @@ namespace vcpkg::Dependencies
         }
     }
 
-    std::vector<AnyAction> create_feature_install_plan(const PortFileProvider& provider,
+    std::vector<AnyAction> create_feature_install_plan(const PortFileProvider::PortFileProvider& port_provider,
+                                                       const CMakeVars::CMakeVarProvider& var_provider,
                                                        const std::vector<FeatureSpec>& specs,
                                                        const StatusParagraphs& status_db,
                                                        const CreateInstallPlanOptions& options)
@@ -757,7 +634,7 @@ namespace vcpkg::Dependencies
             if (spec.feature() == "core") prevent_default_features.insert(spec.name());
         }
 
-        PackageGraph pgraph(provider, status_db);
+        PackageGraph pgraph(port_provider, var_provider, status_db);
         for (auto&& spec : specs)
         {
             // If preventing default features, ignore the automatically generated "" references
@@ -766,19 +643,6 @@ namespace vcpkg::Dependencies
         }
 
         return pgraph.serialize(options);
-    }
-
-    /// <summary>Figure out which actions are required to install features specifications in `specs`.</summary>
-    /// <param name="map">Map of all source control files in the current environment.</param>
-    /// <param name="specs">Feature specifications to resolve dependencies for.</param>
-    /// <param name="status_db">Status of installed packages in the current environment.</param>
-    std::vector<AnyAction> create_feature_install_plan(
-        const std::unordered_map<std::string, SourceControlFileLocation>& map,
-        const std::vector<FeatureSpec>& specs,
-        const StatusParagraphs& status_db)
-    {
-        MapPortFileProvider provider(map);
-        return create_feature_install_plan(provider, specs, status_db);
     }
 
     /// <param name="prevent_default_features">
@@ -836,10 +700,8 @@ namespace vcpkg::Dependencies
             if (p_cluster->transient_uninstalled)
             {
                 // If it will be transiently uninstalled, we need to issue a full installation command
-                auto* pscfl = p_cluster->source.value_or_exit(VCPKG_LINE_INFO).scfl;
-                Checks::check_exit(
-                    VCPKG_LINE_INFO, pscfl != nullptr, "Error: Expected a SourceControlFileLocation to exist");
-                auto&& scfl = *pscfl;
+                auto&& scfl = p_cluster->source.value_or_exit(VCPKG_LINE_INFO).scfl;
+                auto&& cmakevars = p_cluster->source.value_or_exit(VCPKG_LINE_INFO).cmakevars;
 
                 auto dep_specs = Util::fmap(m_graph_plan->install_graph.adjacency_list(p_cluster),
                                             [](ClusterPtr const& p) { return p->spec; });
@@ -848,6 +710,7 @@ namespace vcpkg::Dependencies
                 plan.emplace_back(InstallPlanAction{
                     p_cluster->spec,
                     scfl,
+                    cmakevars,
                     p_cluster->to_install_features,
                     p_cluster->request_type,
                     std::move(dep_specs),
@@ -869,10 +732,12 @@ namespace vcpkg::Dependencies
         return plan;
     }
 
-    static std::unique_ptr<ClusterGraph> create_feature_install_graph(const PortFileProvider& map,
-                                                                      const StatusParagraphs& status_db)
+    static std::unique_ptr<ClusterGraph> create_feature_install_graph(
+        const PortFileProvider::PortFileProvider& port_provider,
+        const CMakeVars::CMakeVarProvider& var_provider,
+        const StatusParagraphs& status_db)
     {
-        std::unique_ptr<ClusterGraph> graph = std::make_unique<ClusterGraph>(map);
+        std::unique_ptr<ClusterGraph> graph = std::make_unique<ClusterGraph>(port_provider, var_provider);
 
         auto installed_ports = get_installed_ports(status_db);
 
@@ -911,8 +776,11 @@ namespace vcpkg::Dependencies
         return graph;
     }
 
-    PackageGraph::PackageGraph(const PortFileProvider& provider, const StatusParagraphs& status_db)
-        : m_graph_plan(std::make_unique<GraphPlan>()), m_graph(create_feature_install_graph(provider, status_db))
+    PackageGraph::PackageGraph(const PortFileProvider::PortFileProvider& port_provider,
+                               const CMakeVars::CMakeVarProvider& var_provider,
+                               const StatusParagraphs& status_db)
+        : m_graph_plan(std::make_unique<GraphPlan>())
+        , m_graph(create_feature_install_graph(port_provider, var_provider, status_db))
     {
     }
 

@@ -1038,110 +1038,55 @@ namespace vcpkg::Build
         return inner_create_buildinfo(*pghs.get());
     }
 
-    PreBuildInfo PreBuildInfo::from_triplet_file(const VcpkgPaths& paths,
-                                                 const Triplet& triplet,
-                                                 Optional<const SourceControlFileLocation&> port)
+    PreBuildInfo::PreBuildInfo(const VcpkgPaths& paths,
+                               const Triplet& triplet,
+                               const std::unordered_map<std::string, std::string>& cmakevars)
     {
-        static constexpr CStringView FLAG_GUID = "c35112b6-d1ba-415b-aa5d-81de856ef8eb";
-
-        const fs::path& cmake_exe_path = paths.get_tool_exe(Tools::CMAKE);
-        const fs::path ports_cmake_script_path = paths.scripts / "get_triplet_environment.cmake";
-        const fs::path triplet_file_path = paths.get_triplet_file_path(triplet);
-
-        std::vector<System::CMakeVariable> args{{"CMAKE_TRIPLET_FILE", triplet_file_path}};
-
-        if (port)
+        for (auto&& kv : VCPKG_OPTIONS)
         {
-            const SourceControlFileLocation& scfl = port.value_or_exit(VCPKG_LINE_INFO);
-
-            if (paths.get_filesystem().is_regular_file(scfl.source_location / "environment-overrides.cmake"))
+            auto find_itr = cmakevars.find(kv.first);
+            if (find_itr == cmakevars.end())
             {
-                args.emplace_back("VCPKG_ENV_OVERRIDES_FILE", scfl.source_location / "environment-overrides.cmake");
+                continue;
+            }
+
+            const std::string& variable_value = find_itr->second;
+
+            switch (kv.second)
+            {
+                case VcpkgTripletVar::TARGET_ARCHITECTURE: target_architecture = variable_value; break;
+                case VcpkgTripletVar::CMAKE_SYSTEM_NAME: cmake_system_name = variable_value; break;
+                case VcpkgTripletVar::CMAKE_SYSTEM_VERSION: cmake_system_version = variable_value; break;
+                case VcpkgTripletVar::PLATFORM_TOOLSET:
+                    platform_toolset = variable_value.empty() ? nullopt : Optional<std::string>{variable_value};
+                    break;
+                case VcpkgTripletVar::VISUAL_STUDIO_PATH:
+                    visual_studio_path = variable_value.empty() ? nullopt : Optional<fs::path>{variable_value};
+                    break;
+                case VcpkgTripletVar::CHAINLOAD_TOOLCHAIN_FILE:
+                    external_toolchain_file = variable_value.empty() ? nullopt : Optional<std::string>{variable_value};
+                    break;
+                case VcpkgTripletVar::BUILD_TYPE:
+                    if (variable_value.empty())
+                        build_type = nullopt;
+                    else if (Strings::case_insensitive_ascii_equals(variable_value, "debug"))
+                        build_type = ConfigurationType::DEBUG;
+                    else if (Strings::case_insensitive_ascii_equals(variable_value, "release"))
+                        build_type = ConfigurationType::RELEASE;
+                    else
+                        Checks::exit_with_message(
+                            VCPKG_LINE_INFO, "Unknown setting for VCPKG_BUILD_TYPE: %s", variable_value);
+                    break;
+                case VcpkgTripletVar::ENV_PASSTHROUGH:
+                    passthrough_env_vars = Strings::split(variable_value, ";");
+                    break;
+                case VcpkgTripletVar::PUBLIC_ABI_OVERRIDE:
+                    public_abi_override = variable_value.empty() ? nullopt : Optional<std::string>{variable_value};
+                    break;
             }
         }
 
-        const auto cmd_launch_cmake = System::make_cmake_cmd(cmake_exe_path, ports_cmake_script_path, args);
-
-        const auto ec_data = System::cmd_execute_and_capture_output(cmd_launch_cmake);
-        Checks::check_exit(VCPKG_LINE_INFO, ec_data.exit_code == 0, ec_data.output);
-
-        const std::vector<std::string> lines = Strings::split(ec_data.output, "\n");
-
-        PreBuildInfo pre_build_info;
-
-        pre_build_info.port = port;
-
-        const auto e = lines.cend();
-        auto cur = std::find(lines.cbegin(), e, FLAG_GUID);
-        if (cur != e) ++cur;
-
-        for (; cur != e; ++cur)
-        {
-            auto&& line = *cur;
-
-            const std::vector<std::string> s = Strings::split(line, "=");
-            Checks::check_exit(VCPKG_LINE_INFO,
-                               s.size() == 1 || s.size() == 2,
-                               "Expected format is [VARIABLE_NAME=VARIABLE_VALUE], but was [%s]",
-                               line);
-
-            const bool variable_with_no_value = s.size() == 1;
-            const std::string variable_name = s.at(0);
-            const std::string variable_value = variable_with_no_value ? "" : s.at(1);
-
-            auto maybe_option = VCPKG_OPTIONS.find(variable_name);
-            if (maybe_option != VCPKG_OPTIONS.end())
-            {
-                switch (maybe_option->second)
-                {
-                    case VcpkgTripletVar::TARGET_ARCHITECTURE:
-                        pre_build_info.target_architecture = variable_value;
-                        break;
-                    case VcpkgTripletVar::CMAKE_SYSTEM_NAME: pre_build_info.cmake_system_name = variable_value; break;
-                    case VcpkgTripletVar::CMAKE_SYSTEM_VERSION:
-                        pre_build_info.cmake_system_version = variable_value;
-                        break;
-                    case VcpkgTripletVar::PLATFORM_TOOLSET:
-                        pre_build_info.platform_toolset =
-                            variable_value.empty() ? nullopt : Optional<std::string>{variable_value};
-                        break;
-                    case VcpkgTripletVar::VISUAL_STUDIO_PATH:
-                        pre_build_info.visual_studio_path =
-                            variable_value.empty() ? nullopt : Optional<fs::path>{variable_value};
-                        break;
-                    case VcpkgTripletVar::CHAINLOAD_TOOLCHAIN_FILE:
-                        pre_build_info.external_toolchain_file =
-                            variable_value.empty() ? nullopt : Optional<std::string>{variable_value};
-                        break;
-                    case VcpkgTripletVar::BUILD_TYPE:
-                        if (variable_value.empty())
-                            pre_build_info.build_type = nullopt;
-                        else if (Strings::case_insensitive_ascii_equals(variable_value, "debug"))
-                            pre_build_info.build_type = ConfigurationType::DEBUG;
-                        else if (Strings::case_insensitive_ascii_equals(variable_value, "release"))
-                            pre_build_info.build_type = ConfigurationType::RELEASE;
-                        else
-                            Checks::exit_with_message(
-                                VCPKG_LINE_INFO, "Unknown setting for VCPKG_BUILD_TYPE: %s", variable_value);
-                        break;
-                    case VcpkgTripletVar::ENV_PASSTHROUGH:
-                        pre_build_info.passthrough_env_vars = Strings::split(variable_value, ";");
-                        break;
-                    case VcpkgTripletVar::PUBLIC_ABI_OVERRIDE:
-                        pre_build_info.public_abi_override =
-                            variable_value.empty() ? nullopt : Optional<std::string>{variable_value};
-                        break;
-                }
-            }
-            else
-            {
-                Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown variable name %s", line);
-            }
-        }
-
-        pre_build_info.triplet_abi_tag = get_triplet_abi(paths, pre_build_info, triplet);
-
-        return pre_build_info;
+        triplet_abi_tag = get_triplet_abi(paths, *this, triplet);
     }
 
     ExtendedBuildResult::ExtendedBuildResult(BuildResult code) : code(code) {}

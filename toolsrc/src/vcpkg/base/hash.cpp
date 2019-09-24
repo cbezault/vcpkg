@@ -196,7 +196,8 @@ namespace vcpkg::Hash
                 // only matters on 64-bit -- BCryptHasher takes an unsigned long
                 // length, so if you have an array bigger than 2**32-1 elements,
                 // you have a problem.
-                if (sizeof(end - start) > sizeof(unsigned long)) {
+                if (sizeof(end - start) > sizeof(unsigned long))
+                {
                     constexpr auto max = static_cast<std::ptrdiff_t>(std::numeric_limits<unsigned long>::max());
                     Checks::check_exit(VCPKG_LINE_INFO, end - start <= max);
                 }
@@ -677,7 +678,7 @@ namespace vcpkg::Hash
         auto hasher = BCryptHasher(algo);
         return f(hasher);
 #else
-        switch (algo.tag)
+        switch (algo)
         {
             case Algorithm::Sha1:
             {

@@ -101,6 +101,23 @@ namespace vcpkg
         }
     }
 
+    std::string Type::to_string(const Type& t)
+    {
+        switch (t.type)
+        {
+            case Type::ALIAS: return "Alias";
+            case Type::PORT: return "Port";
+            case Type::UNKNOWN: return "Unknown";
+        }
+    }
+
+    Type Type::from_string(const std::string& t)
+    {
+        if (t == "Alias") return Type{Type::ALIAS};
+        if (t == "Port" || t == "") return Type{Type::PORT};
+        return Type{Type::UNKNOWN};
+    }
+
     static ParseExpected<SourceParagraph> parse_source_paragraph(RawParagraph&& fields)
     {
         ParagraphParser parser(std::move(fields));
@@ -117,7 +134,7 @@ namespace vcpkg
             parse_comma_list(parser.optional_field(SourceParagraphFields::BUILD_DEPENDS)));
         spgh->supports = parse_comma_list(parser.optional_field(SourceParagraphFields::SUPPORTS));
         spgh->default_features = parse_comma_list(parser.optional_field(SourceParagraphFields::DEFAULTFEATURES));
-
+        spgh->type = from_string(parser.optional_field(SourceParagraphFields::TYPE));
         auto err = parser.error_info(spgh->name);
         if (err)
             return std::move(err);

@@ -122,12 +122,9 @@ namespace vcpkg::Build
     /// </summary>
     struct PreBuildInfo
     {
-        /// <summary>
-        /// Runs the triplet file in a "capture" mode to create a PreBuildInfo
-        /// </summary>
-        static PreBuildInfo from_triplet_file(const VcpkgPaths& paths,
-                                              const Triplet& triplet,
-                                              Optional<const SourceControlFileLocation&> port = nullopt);
+        PreBuildInfo(const VcpkgPaths& paths,
+                     const Triplet& triplet,
+                     const std::unordered_map<std::string, std::string>& cmakevars);
 
         std::string triplet_abi_tag;
         std::string target_architecture;
@@ -185,13 +182,15 @@ namespace vcpkg::Build
         BuildPackageConfig(const SourceControlFileLocation& scfl,
                            const Triplet& triplet,
                            const BuildPackageOptions& build_package_options,
-                           const std::set<std::string>& feature_list)
+                           const std::set<std::string>& feature_list,
+                           const std::unordered_map<std::string, std::string>& cmake_vars)
             : scfl(scfl)
             , scf(*scfl.source_control_file)
             , triplet(triplet)
             , port_dir(scfl.source_location)
             , build_package_options(build_package_options)
             , feature_list(feature_list)
+            , cmake_vars(cmake_vars)
         {
         }
 
@@ -201,6 +200,7 @@ namespace vcpkg::Build
         fs::path port_dir;
         const BuildPackageOptions& build_package_options;
         const std::set<std::string>& feature_list;
+        const std::unordered_map<std::string, std::string>& cmake_vars;
     };
 
     ExtendedBuildResult build_package(const VcpkgPaths& paths,

@@ -30,6 +30,19 @@ namespace vcpkg
 
     std::string to_string(const Dependency& dep);
 
+    struct Type
+    {
+        enum
+        {
+            UNKNOWN,
+            PORT,
+            ALIAS,
+        } type;
+
+        static std::string to_string(const Type&);
+        static Type from_string(const std::string&);
+    };
+
     /// <summary>
     /// Port metadata of additional feature in a package (part of CONTROL file)
     /// </summary>
@@ -53,6 +66,7 @@ namespace vcpkg
         std::vector<std::string> supports;
         std::vector<Dependency> depends;
         std::vector<std::string> default_features;
+        Type type;
     };
 
     /// <summary>
@@ -70,8 +84,8 @@ namespace vcpkg
     };
 
     /// <summary>
-    /// Full metadata of a package: core and other features. As well as the location the SourceControlFile was loaded
-    /// from.
+    /// Full metadata of a package: core and other features. As well as the location the SourceControlFile was
+    /// loaded from.
     /// </summary>
     struct SourceControlFileLocation
     {
