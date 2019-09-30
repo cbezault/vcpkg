@@ -10,34 +10,54 @@ namespace vcpkg::CMakeVars
     struct CMakeVarProvider : Util::ResourceBase
     {
     private:
-        std::vector<std::pair<std::string, std::string>> launch_and_split(const fs::path& provider_path,
-                                                                          const fs::path& consumer_path) const
+        fs::path create_extraction_file(const Span<const PackageSpec> specs) {}
+        std::vector<std::pair<std::string, std::string>> launch_and_split(const fs::path& script_path) const
         {
-            static constexpr CStringView FLAG_GUID = "c35112b6-d1ba-415b-aa5d-81de856ef8eb";
+            static constexpr CStringView FLAG_GUID1 = "c35112b6-d1ba-415b-aa5d-81de856ef8eb";
+            static constexpr CStringView FLAG_GUID2 = "e1e74b5c-18cb-4474-a6bd-5c1c8bc81f3f";
+            static constexpr CStringView FLAG_GUID3 = "739b0178-d2cf-4a1b-b26c-6764c761d636";
+            static constexpr CStringView FLAG_GUID4 = "ba27cd04-1df1-4237-b519-09cc0c3dfa3c";
 
-            const auto cmd_launch_cmake =
-                System::make_cmake_cmd(cmake_exe_path, consumer_path, {{"CMAKE_FILE", provider_path}});
+            const auto cmd_launch_cmake = System::make_cmake_cmd(cmake_exe_path, script_path, {});
             const auto ec_data = System::cmd_execute_and_capture_output(cmd_launch_cmake);
             Checks::check_exit(VCPKG_LINE_INFO, ec_data.exit_code == 0, ec_data.output);
 
             const std::vector<std::string> lines = Strings::split(ec_data.output, "\n");
 
             std::vector<std::pair<std::string, std::string>> vars;
-            const auto e = lines.cend();
-            auto cur = std::find(lines.cbegin(), e, FLAG_GUID);
-            if (cur != e) ++cur;
 
-            for (; cur != e; ++cur)
+            auto parse_vars = [&vars](decltype(lines)::const_iterator& cur,
+                                      const decltype(lines)::const_iterator& end) {
+                if (cur != end) ++cur;
+                for (; cur != end; ++cur)
+                {
+                    auto&& line = *cur;
+
+                    std::vector<std::string> s = Strings::split(line, "=");
+                    Checks::check_exit(VCPKG_LINE_INFO,
+                                       s.size() == 1 || s.size() == 2,
+                                       "Expected format is [VARIABLE_NAME=VARIABLE_VALUE], but was [%s]",
+                                       line);
+
+                    vars.emplace_back(std::move(s[0]), s.size() == 1 ? "" : std::move(s[1]));
+                }
+            };
+
+            const auto end = lines.cend();
+            auto triplet_start = std::find(lines.cbegin(), end, FLAG_GUID1);
+            auto triplet_end = std::find(triplet_start, end, FLAG_GUID2);
+            auto abi_settings_start = std::find(triplet_end, end, FLAG_GUID3);
+            auto abi_settings_end = std::find(abi_settings_start, end, FLAG_GUID4);
+
+            while (triplet_start != end)
             {
-                auto&& line = *cur;
+                parse_vars(triplet_start, triplet_end);
+                parse_vars(abi_settings_start, abi_settings_end);
 
-                const std::vector<std::string> s = Strings::split(line, "=");
-                Checks::check_exit(VCPKG_LINE_INFO,
-                                   s.size() == 1 || s.size() == 2,
-                                   "Expected format is [VARIABLE_NAME=VARIABLE_VALUE], but was [%s]",
-                                   line);
-
-                vars.emplace_back(s.at(0), s.size() == 1 ? "" : s.at(1));
+                triplet_start = std::find(abi_settings_end, end, FLAG_GUID1);
+                triplet_end = std::find(triplet_start, end, FLAG_GUID2);
+                abi_settings_start = std::find(triplet_end, end, FLAG_GUID3);
+                abi_settings_end = std::find(abi_settings_start, end, FLAG_GUID4);
             }
 
             return vars;
