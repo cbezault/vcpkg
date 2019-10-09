@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vcpkg/cmakevars.h>
 #include <vcpkg/packagespec.h>
 #include <vcpkg/statusparagraphs.h>
 #include <vcpkg/triplet.h>
@@ -21,6 +22,7 @@ namespace vcpkg::Build
     {
         void perform_and_exit_ex(const FullPackageSpec& full_spec,
                                  const SourceControlFileLocation& scfl,
+                                 const PortFileProvider::PathsPortFileProvider& provider,
                                  const ParsedArguments& options,
                                  const VcpkgPaths& paths);
 
@@ -182,15 +184,19 @@ namespace vcpkg::Build
         BuildPackageConfig(const SourceControlFileLocation& scfl,
                            const Triplet& triplet,
                            const BuildPackageOptions& build_package_options,
-                           const std::set<std::string>& feature_list,
-                           const std::unordered_map<std::string, std::string>& cmake_vars)
+                           const CMakeVars::CMakeVarProvider& var_provider,
+                           std::unordered_map<std::string, std::vector<FeatureSpec>>&& feature_dependencies,
+                           std::vector<PackageSpec>&& package_dependencies,
+                           std::vector<std::string>&& feature_list)
             : scfl(scfl)
             , scf(*scfl.source_control_file)
             , triplet(triplet)
             , port_dir(scfl.source_location)
             , build_package_options(build_package_options)
+            , var_provider(var_provider)
+            , feature_dependencies(feature_dependencies)
+            , package_dependencies(package_dependencies)
             , feature_list(feature_list)
-            , cmake_vars(cmake_vars)
         {
         }
 
@@ -199,8 +205,11 @@ namespace vcpkg::Build
         const Triplet& triplet;
         fs::path port_dir;
         const BuildPackageOptions& build_package_options;
-        const std::set<std::string>& feature_list;
-        const std::unordered_map<std::string, std::string>& cmake_vars;
+        const CMakeVars::CMakeVarProvider& var_provider;
+
+        const std::unordered_map<std::string, std::vector<FeatureSpec>>& feature_dependencies;
+        std::vector<PackageSpec> package_dependencies;
+        std::vector<std::string> feature_list;
     };
 
     ExtendedBuildResult build_package(const VcpkgPaths& paths,

@@ -1,6 +1,8 @@
 #include <pch.h>
+
+#include <vcpkg/paragraphs.h>
 #include <vcpkg/portfileprovider.h>
-#include <vcpkg/sourceparagraphs.h>
+#include <vcpkg/sourceparagraph.h>
 
 namespace vcpkg::PortFileProvider
 {

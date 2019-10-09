@@ -13,8 +13,14 @@ namespace vcpkg
     {
         BinaryParagraph();
         explicit BinaryParagraph(Parse::RawParagraph fields);
-        BinaryParagraph(const SourceParagraph& spgh, const Triplet& triplet, const std::string& abi_tag);
-        BinaryParagraph(const SourceParagraph& spgh, const FeatureParagraph& fpgh, const Triplet& triplet);
+        BinaryParagraph(const SourceParagraph& spgh,
+                        const Triplet& triplet,
+                        const std::string& abi_tag,
+                        const std::vector<FeatureSpec>& deps);
+        BinaryParagraph(const SourceParagraph& spgh,
+                        const FeatureParagraph& fpgh,
+                        const Triplet& triplet,
+                        const std::vector<FeatureSpec>& deps);
 
         std::string displayname() const;
 

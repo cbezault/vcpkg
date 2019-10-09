@@ -343,7 +343,7 @@ namespace vcpkg::Export
             Optional<std::string>& out_opt;
         };
         const auto options_implies =
-            [&](const std::string& main_opt_name, bool main_opt, Span<const OptionPair> implying_opts) {
+            [&](const std::string& main_opt_name, bool main_opt, const std::vector<OptionPair> implying_opts) {
                 if (main_opt)
                 {
                     for (auto&& opt : implying_opts)
@@ -501,9 +501,10 @@ With a project open, go to Tools->NuGet Package Manager->Package Manager Console
         const StatusParagraphs status_db = database_load_check(paths);
 
         // Load ports from ports dirs
-        Dependencies::PathsPortFileProvider provider(paths, args.overlay_ports.get());
+        PortFileProvider::PathsPortFileProvider provider(paths, args.overlay_ports.get());
 
-        std::vector<ExportPlanAction> export_plan = Dependencies::create_export_plan(opts.specs, status_db);
+        std::vector<ExportPlanAction> export_plan =
+            Dependencies::PackageGraph::create_export_plan(opts.specs, status_db);
         Checks::check_exit(VCPKG_LINE_INFO, !export_plan.empty(), "Export plan cannot be empty");
 
         std::map<ExportPlanType, std::vector<const ExportPlanAction*>> group_by_plan_type;

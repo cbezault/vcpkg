@@ -119,6 +119,12 @@ namespace vcpkg::Hash
         }
     };
 
+    UInt128 operator>>(UInt128, int) noexcept;
+    UInt128 operator<<(UInt128, int) noexcept;
+    UInt128 operator+(UInt128, std::size_t) noexcept;
+
+    uchar operator&(UInt128, uchar) noexcept;
+
     UInt128 operator>>(UInt128 lhs, int by) noexcept { return lhs >>= by; }
     UInt128 operator<<(UInt128 lhs, int by) noexcept { return lhs <<= by; }
     UInt128 operator+(UInt128 lhs, std::size_t rhs) noexcept { return lhs += rhs; }
@@ -128,7 +134,6 @@ namespace vcpkg::Hash
     template<class T>
     void top_bits(T) = delete;
 
-    static constexpr uchar top_bits(uchar x) { return x; }
     static constexpr uchar top_bits(std::uint32_t x) { return (x >> 24) & 0xFF; }
     static constexpr uchar top_bits(std::uint64_t x) { return (x >> 56) & 0xFF; }
     static constexpr uchar top_bits(UInt128 x) { return top_bits(x.top); }
@@ -423,7 +428,7 @@ namespace vcpkg::Hash
                     std::uint32_t f;
                     std::uint32_t k;
 
-                    if (0 <= i && i < 20)
+                    if (i < 20)
                     {
                         f = (b & c) | (~b & d);
                         k = 0x5A827999;

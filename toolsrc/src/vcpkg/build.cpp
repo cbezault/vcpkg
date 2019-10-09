@@ -24,9 +24,9 @@
 #include <vcpkg/vcpkglib.h>
 
 using vcpkg::Build::BuildResult;
-using vcpkg::Dependencies::PathsPortFileProvider;
 using vcpkg::Parse::ParseControlErrorInfo;
 using vcpkg::Parse::ParseExpected;
+using vcpkg::PortFileProvider::PathsPortFileProvider;
 
 namespace vcpkg::Build::Command
 {
@@ -35,12 +35,21 @@ namespace vcpkg::Build::Command
 
     void perform_and_exit_ex(const FullPackageSpec& full_spec,
                              const SourceControlFileLocation& scfl,
+                             const PathsPortFileProvider& provider,
                              const ParsedArguments& options,
                              const VcpkgPaths& paths)
     {
         vcpkg::Util::unused(options);
 
-        const StatusParagraphs status_db = database_load_check(paths);
+        CMakeVars::CMakeVarProvider var_provider(paths);
+        var_provider.load_dep_info_vars(std::array<PackageSpec, 1>{full_spec.package_spec});
+        var_provider.load_tag_vars(std::array<FullPackageSpec, 1>{full_spec}, provider);
+
+        StatusParagraphs status_db = database_load_check(paths);
+
+        auto action_plan = Dependencies::PackageGraph::create_feature_install_plan(
+            provider, var_provider, std::vector<FullPackageSpec>{full_spec}, status_db);
+
         const PackageSpec& spec = full_spec.package_spec;
         const SourceControlFile& scf = *scfl.source_control_file;
 
@@ -61,10 +70,31 @@ namespace vcpkg::Build::Command
             Build::FailOnTombstone::NO,
         };
 
-        std::set<std::string> features_as_set(full_spec.features.begin(), full_spec.features.end());
-        features_as_set.emplace("core");
+        std::unordered_map<std::string, std::vector<FeatureSpec>>* feature_dependencies = nullptr;
+        std::vector<PackageSpec>* package_dependencies = nullptr;
+        std::vector<std::string>* feature_list = nullptr;
+        for (auto& action : action_plan)
+        {
+            if (action.spec() == full_spec.package_spec && action.install_action.has_value())
+            {
+                InstallPlanAction& install_action = action.install_action.value_or_exit(VCPKG_LINE_INFO);
+                feature_dependencies = &install_action.feature_dependencies;
+                package_dependencies = &install_action.package_dependencies;
+                feature_list = &install_action.feature_list;
+            }
+        }
 
-        const Build::BuildPackageConfig build_config{scfl, spec.triplet(), build_package_options, features_as_set};
+        Checks::check_exit(VCPKG_LINE_INFO, feature_dependencies != nullptr);
+        Checks::check_exit(VCPKG_LINE_INFO, package_dependencies != nullptr);
+        Checks::check_exit(VCPKG_LINE_INFO, feature_list != nullptr);
+
+        const Build::BuildPackageConfig build_config{scfl,
+                                                     spec.triplet(),
+                                                     build_package_options,
+                                                     var_provider,
+                                                     std::move(*feature_dependencies),
+                                                     std::move(*package_dependencies),
+                                                     std::move(*feature_list)};
 
         const auto build_timer = Chrono::ElapsedTimer::create_started();
         const auto result = Build::build_package(paths, build_config, status_db);
@@ -120,7 +150,7 @@ namespace vcpkg::Build::Command
 
         Checks::check_exit(VCPKG_LINE_INFO, scfl != nullptr, "Error: Couldn't find port '%s'", port_name);
 
-        perform_and_exit_ex(spec, *scfl, options, paths);
+        perform_and_exit_ex(spec, *scfl, provider, options, paths);
     }
 }
 
@@ -256,20 +286,15 @@ namespace vcpkg::Build
                                tonull);
     }
 
-    static BinaryParagraph create_binary_feature_control_file(const SourceParagraph& source_paragraph,
-                                                              const FeatureParagraph& feature_paragraph,
-                                                              const Triplet& triplet)
-    {
-        return BinaryParagraph(source_paragraph, feature_paragraph, triplet);
-    }
-
-    static std::unique_ptr<BinaryControlFile> create_binary_control_file(const SourceParagraph& source_paragraph,
-                                                                         const Triplet& triplet,
-                                                                         const BuildInfo& build_info,
-                                                                         const std::string& abi_tag)
+    static std::unique_ptr<BinaryControlFile> create_binary_control_file(
+        const SourceParagraph& source_paragraph,
+        const Triplet& triplet,
+        const BuildInfo& build_info,
+        const std::string& abi_tag,
+        const std::vector<FeatureSpec>& core_dependencies)
     {
         auto bcf = std::make_unique<BinaryControlFile>();
-        BinaryParagraph bpgh(source_paragraph, triplet, abi_tag);
+        BinaryParagraph bpgh(source_paragraph, triplet, abi_tag, core_dependencies);
         if (const auto p_ver = build_info.version.get())
         {
             bpgh.version = *p_ver;
@@ -288,71 +313,6 @@ namespace vcpkg::Build
         }
         const fs::path binary_control_file = paths.packages / bcf.core_paragraph.dir() / "CONTROL";
         paths.get_filesystem().write_contents(binary_control_file, start, VCPKG_LINE_INFO);
-    }
-
-    static std::vector<Features> get_dependencies(const SourceControlFile& scf,
-                                                  const std::set<std::string>& feature_list,
-                                                  const Triplet& triplet)
-    {
-        return Util::fmap_flatten(feature_list, [&](std::string const& feature) -> std::vector<Features> {
-            if (feature == "core")
-            {
-                return filter_dependencies_to_features(scf.core_paragraph->depends, triplet);
-            }
-
-            auto maybe_feature = scf.find_feature(feature);
-            Checks::check_exit(VCPKG_LINE_INFO, maybe_feature.has_value());
-
-            return filter_dependencies_to_features(maybe_feature.get()->depends, triplet);
-        });
-    }
-
-    static std::vector<std::string> get_dependency_names(const SourceControlFile& scf,
-                                                         const std::set<std::string>& feature_list,
-                                                         const Triplet& triplet)
-    {
-        return Util::sort_unique_erase(
-            Util::fmap(get_dependencies(scf, feature_list, triplet), [&](const Features& feat) { return feat.name; }));
-    }
-
-    static std::vector<FeatureSpec> compute_required_feature_specs(const BuildPackageConfig& config,
-                                                                   const StatusParagraphs& status_db)
-    {
-        const Triplet& triplet = config.triplet;
-
-        const std::vector<std::string> dep_strings = get_dependency_names(config.scf, config.feature_list, triplet);
-
-        auto dep_fspecs = FeatureSpec::from_strings_and_triplet(dep_strings, triplet);
-        Util::sort_unique_erase(dep_fspecs);
-
-        // expand defaults
-        std::vector<FeatureSpec> ret;
-        for (auto&& fspec : dep_fspecs)
-        {
-            if (fspec.feature().empty())
-            {
-                // reference to default features
-                const auto it = status_db.find_installed(fspec.spec());
-                if (it == status_db.end())
-                {
-                    // not currently installed, so just leave the default reference so it will fail later
-                    ret.push_back(fspec);
-                }
-                else
-                {
-                    ret.emplace_back(fspec.spec(), "core");
-                    for (auto&& default_feature : it->get()->package.default_features)
-                        ret.emplace_back(fspec.spec(), default_feature);
-                }
-            }
-            else
-            {
-                ret.push_back(fspec);
-            }
-        }
-        Util::sort_unique_erase(ret);
-
-        return ret;
     }
 
     static int get_concurrency()
@@ -413,30 +373,22 @@ namespace vcpkg::Build
         }
 
         const Files::Filesystem& fs = paths.get_filesystem();
-        if (fs.is_regular_file(config.port_dir / "environment-overrides.cmake"))
+
+        std::vector<std::string> port_configs;
+        for (const PackageSpec& dependency : config.package_dependencies)
         {
-            variables.emplace_back("VCPKG_ENV_OVERRIDES_FILE", config.port_dir / "environment-overrides.cmake");
-        }
+            const fs::path port_config_path = paths.installed / dependency.triplet().canonical_name() / "share" /
+                                              dependency.name() / "vcpkg-port-config.cmake";
 
-        std::vector<FeatureSpec> dependencies =
-            filter_dependencies_to_specs(config.scfl.source_control_file->core_paragraph->depends, triplet);
-
-        std::vector<std::string> port_toolchains;
-        for (const FeatureSpec& dependency : dependencies)
-        {
-            const fs::path port_toolchain_path = paths.installed / dependency.triplet().canonical_name() / "share" /
-                                                 dependency.spec().name() / "port-toolchain.cmake";
-
-            if (fs.is_regular_file(port_toolchain_path))
+            if (fs.is_regular_file(port_config_path))
             {
-                System::print2(port_toolchain_path.u8string());
-                port_toolchains.emplace_back(port_toolchain_path.u8string());
+                port_configs.emplace_back(port_config_path.u8string());
             }
         }
 
-        if (!port_toolchains.empty())
+        if (!port_configs.empty())
         {
-            variables.emplace_back("VCPKG_PORT_TOOLCHAINS", Strings::join(";", port_toolchains));
+            variables.emplace_back("VCPKG_PORT_CONFIGS", Strings::join(";", port_configs));
         }
 
         return variables;
@@ -578,8 +530,11 @@ namespace vcpkg::Build
         const size_t error_count =
             PostBuildLint::perform_all_checks(spec, paths, pre_build_info, build_info, config.port_dir);
 
-        std::unique_ptr<BinaryControlFile> bcf =
-            create_binary_control_file(*config.scf.core_paragraph, triplet, build_info, abi_tag);
+        auto find_itr = config.feature_dependencies.find("core");
+        Checks::check_exit(VCPKG_LINE_INFO, find_itr != config.feature_dependencies.end());
+
+        std::unique_ptr<BinaryControlFile> bcf = create_binary_control_file(
+            *config.scf.core_paragraph, triplet, build_info, abi_tag, std::move(find_itr->second));
 
         if (error_count != 0)
         {
@@ -590,8 +545,13 @@ namespace vcpkg::Build
             for (auto&& f_pgh : config.scf.feature_paragraphs)
             {
                 if (f_pgh->name == feature)
-                    bcf->features.push_back(
-                        create_binary_feature_control_file(*config.scf.core_paragraph, *f_pgh, triplet));
+                {
+                    find_itr = config.feature_dependencies.find(feature);
+                    Checks::check_exit(VCPKG_LINE_INFO, find_itr != config.feature_dependencies.end());
+
+                    bcf->features.emplace_back(
+                        *config.scf.core_paragraph, *f_pgh, triplet, std::move(find_itr->second));
+                }
             }
         }
 
@@ -694,6 +654,14 @@ namespace vcpkg::Build
                                       Hash::Algorithm::Sha1));
         }
 
+        // No need to sort, the variables are stored in the same order they are written down in the abi-settings file
+        for (const auto env_var : pre_build_info.passthrough_env_vars)
+        {
+            abi_tag_entries.emplace_back(
+                "ENV:" + env_var,
+                Hash::get_string_hash(System::get_environment_variable(env_var).value_or(""), Hash::Algorithm::Sha1));
+        }
+
         if (config.build_package_options.use_head_version == UseHeadVersion::YES)
             abi_tag_entries.emplace_back("head", "");
 
@@ -788,30 +756,27 @@ namespace vcpkg::Build
         const Triplet& triplet = config.triplet;
         const std::string& name = config.scf.core_paragraph->name;
 
-        std::vector<FeatureSpec> required_fspecs = compute_required_feature_specs(config, status_db);
-        std::vector<FeatureSpec> required_fspecs_copy = required_fspecs;
-
-        // extract out the actual package ids
-        auto dep_pspecs = Util::fmap(required_fspecs, [](FeatureSpec const& fspec) { return fspec.spec(); });
-        Util::sort_unique_erase(dep_pspecs);
-
-        // Find all features that aren't installed. This mutates required_fspecs.
-        Util::erase_remove_if(required_fspecs, [&](FeatureSpec const& fspec) {
-            return status_db.is_installed(fspec) || fspec.name() == name;
-        });
-
-        if (!required_fspecs.empty())
+        std::vector<FeatureSpec> missing_fspecs;
+        for (const auto& kv : config.feature_dependencies)
         {
-            return {BuildResult::CASCADED_DUE_TO_MISSING_DEPENDENCIES, std::move(required_fspecs)};
+            for (const FeatureSpec& spec : kv.second)
+            {
+                if (!(status_db.is_installed(spec) || spec.name() == name))
+                {
+                    missing_fspecs.emplace_back(spec);
+                }
+            }
         }
 
-        const PackageSpec spec =
-            PackageSpec::from_name_and_triplet(config.scf.core_paragraph->name, triplet).value_or_exit(VCPKG_LINE_INFO);
+        if (!missing_fspecs.empty())
+        {
+            return {BuildResult::CASCADED_DUE_TO_MISSING_DEPENDENCIES, std::move(missing_fspecs)};
+        }
+
+        const PackageSpec spec = PackageSpec::from_name_and_triplet(name, triplet).value_or_exit(VCPKG_LINE_INFO);
 
         std::vector<AbiEntry> dependency_abis;
-
-        // dep_pspecs was not destroyed
-        for (auto&& pspec : dep_pspecs)
+        for (auto&& pspec : config.package_dependencies)
         {
             if (pspec == spec) continue;
             const auto status_it = status_db.find_installed(pspec);
@@ -820,7 +785,9 @@ namespace vcpkg::Build
                 AbiEntry{status_it->get()->package.spec.name(), status_it->get()->package.abi});
         }
 
-        const auto pre_build_info = PreBuildInfo::from_triplet_file(paths, triplet, config.scfl);
+        const std::unordered_map<std::string, std::string>& cmake_vars =
+            config.var_provider.get_tag_vars(spec).value_or_exit(VCPKG_LINE_INFO);
+        const PreBuildInfo pre_build_info(paths, triplet, cmake_vars);
 
         auto maybe_abi_tag_and_file = compute_abi_tag(paths, config, pre_build_info, dependency_abis);
         if (!maybe_abi_tag_and_file)

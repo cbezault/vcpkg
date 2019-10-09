@@ -2,6 +2,8 @@
 
 #include <vcpkg/base/checks.h>
 #include <vcpkg/base/system.print.h>
+#include <vcpkg/base/util.h>
+
 #include <vcpkg/binaryparagraph.h>
 #include <vcpkg/parse.h>
 
@@ -61,6 +63,8 @@ namespace vcpkg
             this->default_features = parse_comma_list(parser.optional_field(Fields::DEFAULTFEATURES));
         }
 
+        this->type = Type::from_string(parser.optional_field(Fields::TYPE));
+
         if (const auto err = parser.error_info(this->spec.to_string()))
         {
             System::print2(System::Color::error, "Error: while parsing the Binary Paragraph for ", this->spec, '\n');
@@ -68,13 +72,14 @@ namespace vcpkg
             Checks::exit_fail(VCPKG_LINE_INFO);
         }
 
-        this->type = Type::from_string(parser.optional_field(Fields::TYPE));
-
         // prefer failing above when possible because it gives better information
         Checks::check_exit(VCPKG_LINE_INFO, multi_arch == "same", "Multi-Arch must be 'same' but was %s", multi_arch);
     }
 
-    BinaryParagraph::BinaryParagraph(const SourceParagraph& spgh, const Triplet& triplet, const std::string& abi_tag)
+    BinaryParagraph::BinaryParagraph(const SourceParagraph& spgh,
+                                     const Triplet& triplet,
+                                     const std::string& abi_tag,
+                                     const std::vector<FeatureSpec>& deps)
         : version(spgh.version)
         , description(spgh.description)
         , maintainer(spgh.maintainer)
@@ -82,14 +87,17 @@ namespace vcpkg
         , type(spgh.type)
     {
         this->spec = PackageSpec::from_name_and_triplet(spgh.name, triplet).value_or_exit(VCPKG_LINE_INFO);
-        this->depends = filter_dependencies(spgh.depends, triplet);
+        this->depends = Util::fmap(deps, [](const FeatureSpec& spec) { return spec.name(); });
     }
 
-    BinaryParagraph::BinaryParagraph(const SourceParagraph& spgh, const FeatureParagraph& fpgh, const Triplet& triplet)
+    BinaryParagraph::BinaryParagraph(const SourceParagraph& spgh,
+                                     const FeatureParagraph& fpgh,
+                                     const Triplet& triplet,
+                                     const std ::vector<FeatureSpec>& deps)
         : version(), description(fpgh.description), maintainer(), feature(fpgh.name), type(spgh.type)
     {
         this->spec = PackageSpec::from_name_and_triplet(spgh.name, triplet).value_or_exit(VCPKG_LINE_INFO);
-        this->depends = filter_dependencies(fpgh.depends, triplet);
+        this->depends = Util::fmap(deps, [](const FeatureSpec& spec) { return spec.name(); });
     }
 
     std::string BinaryParagraph::displayname() const

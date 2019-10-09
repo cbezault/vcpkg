@@ -107,7 +107,7 @@ namespace vcpkg
         {
             case Type::ALIAS: return "Alias";
             case Type::PORT: return "Port";
-            case Type::UNKNOWN: return "Unknown";
+            default: return "Unknown";
         }
     }
 
@@ -134,12 +134,12 @@ namespace vcpkg
             parse_comma_list(parser.optional_field(SourceParagraphFields::BUILD_DEPENDS)));
         spgh->supports = parse_comma_list(parser.optional_field(SourceParagraphFields::SUPPORTS));
         spgh->default_features = parse_comma_list(parser.optional_field(SourceParagraphFields::DEFAULTFEATURES));
-        spgh->type = from_string(parser.optional_field(SourceParagraphFields::TYPE));
+        spgh->type = Type::from_string(parser.optional_field(SourceParagraphFields::TYPE));
         auto err = parser.error_info(spgh->name);
         if (err)
-            return std::move(err);
+            return err;
         else
-            return std::move(spgh);
+            return spgh;
     }
 
     static ParseExpected<FeatureParagraph> parse_feature_paragraph(RawParagraph&& fields)
@@ -156,9 +156,9 @@ namespace vcpkg
 
         auto err = parser.error_info(fpgh->name);
         if (err)
-            return std::move(err);
+            return err;
         else
-            return std::move(fpgh);
+            return fpgh;
     }
 
     ParseExpected<SourceControlFile> SourceControlFile::parse_control_file(
@@ -188,7 +188,7 @@ namespace vcpkg
                 return std::move(maybe_feature).error();
         }
 
-        return std::move(control_file);
+        return control_file;
     }
 
     Optional<const FeatureParagraph&> SourceControlFile::find_feature(const std::string& featurename) const
@@ -237,8 +237,12 @@ namespace vcpkg
         });
     }
 
-    std::vector<std::string> filter_dependencies(const std::vector<vcpkg::Dependency>& deps, const Triplet& t)
+    std::vector<std::string> filter_dependencies(const std::vector<vcpkg::Dependency>& deps,
+                                                 const Triplet& t,
+                                                 const std::unordered_map<std::string, std::string>& cmake_vars)
     {
+        Util::unused(cmake_vars);
+
         std::vector<std::string> ret;
         for (auto&& dep : deps)
         {
@@ -251,23 +255,12 @@ namespace vcpkg
         return ret;
     }
 
-    std::vector<Features> filter_dependencies_to_features(const std::vector<vcpkg::Dependency>& deps, const Triplet& t)
+    std::vector<FeatureSpec> filter_dependencies_to_specs(
+        const std::vector<Dependency>& deps,
+        const Triplet& t,
+        const std::unordered_map<std::string, std::string>& cmake_vars)
     {
-        std::vector<Features> ret;
-        for (auto&& dep : deps)
-        {
-            const auto& qualifier = dep.qualifier;
-            if (qualifier.empty() || evaluate_expression(qualifier, t.canonical_name()))
-            {
-                ret.emplace_back(dep.depend);
-            }
-        }
-        return ret;
-    }
-
-    std::vector<FeatureSpec> filter_dependencies_to_specs(const std::vector<Dependency>& deps, const Triplet& t)
-    {
-        return FeatureSpec::from_strings_and_triplet(filter_dependencies(deps, t), t);
+        return FeatureSpec::from_strings_and_triplet(filter_dependencies(deps, t, cmake_vars), t);
     }
 
     std::string to_string(const Dependency& dep) { return dep.name(); }
@@ -302,9 +295,9 @@ namespace vcpkg
         }
 
         if (unrecognized.empty())
-            return std::move(ret);
+            return ret;
         else
-            return std::move(unrecognized);
+            return unrecognized;
     }
 
     bool Supports::is_supported(Architecture arch, Platform plat, Linkage crt, ToolsetVersion tools)
