@@ -231,7 +231,7 @@ namespace vcpkg
         template<class U>
         T value_or(U&& default_value) &&
         {
-            return this->m_base.has_value() ? T{std::move(this->m_base.value())}
+            return this->m_base.has_value() ? std::move(this->m_base.value())
                                             : static_cast<T>(std::forward<U>(default_value));
         }
 

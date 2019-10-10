@@ -95,9 +95,9 @@ fs::path CMakeVarProvider::create_dep_info_extraction_file(const Span<const Pack
 
     for (const PackageSpec& spec : specs)
     {
-        hasher->add_bytes(spec.name().c_str(), spec.name().c_str() + spec.name().npos);
+        hasher->add_bytes(spec.name().c_str(), spec.name().c_str() + spec.name().length());
         hasher->add_bytes(spec.triplet().to_string().c_str(),
-                          spec.triplet().to_string().c_str() + spec.triplet().to_string().npos);
+                          spec.triplet().to_string().c_str() + spec.triplet().to_string().length());
 
         Strings::append(
             extraction_file, COMMAND_START, spec.name(), " ", paths.get_triplet_file_path(spec.triplet()), COMMAND_END);
@@ -164,9 +164,10 @@ void CMakeVarProvider::load_generic_triplet_vars(const Triplet& triplet) const
 {
     std::vector<std::vector<std::pair<std::string, std::string>>> vars(1);
     FullPackageSpec full_spec = FullPackageSpec::from_string("", triplet).value_or_exit(VCPKG_LINE_INFO);
-    launch_and_split(create_tag_extraction_file(std::array<std::pair<const FullPackageSpec*, std::string>, 1>{
-                         std::pair<const FullPackageSpec*, std::string>{&full_spec, ""}}),
-                     vars);
+    const fs::path file_path = create_tag_extraction_file(std::array<std::pair<const FullPackageSpec*, std::string>, 1>{
+        std::pair<const FullPackageSpec*, std::string>{&full_spec, ""}});
+    launch_and_split(file_path, vars);
+    paths.get_filesystem().remove(file_path, VCPKG_LINE_INFO);
 
     generic_triplet_vars[triplet].insert(std::make_move_iterator(vars.front().begin()),
                                          std::make_move_iterator(vars.front().end()));
@@ -175,7 +176,9 @@ void CMakeVarProvider::load_generic_triplet_vars(const Triplet& triplet) const
 void CMakeVarProvider::load_dep_info_vars(Span<const PackageSpec> specs) const
 {
     std::vector<std::vector<std::pair<std::string, std::string>>> vars(specs.size());
-    launch_and_split(create_dep_info_extraction_file(specs), vars);
+    const fs::path file_path = create_dep_info_extraction_file(specs);
+    launch_and_split(file_path, vars);
+    paths.get_filesystem().remove(file_path, VCPKG_LINE_INFO);
 
     auto var_list_itr = vars.begin();
     for (const PackageSpec& spec : specs)
@@ -202,7 +205,9 @@ void CMakeVarProvider::load_tag_vars(Span<const FullPackageSpec> specs,
     }
 
     std::vector<std::vector<std::pair<std::string, std::string>>> vars(spec_abi_settings.size());
-    launch_and_split(create_tag_extraction_file(spec_abi_settings), vars);
+    const fs::path file_path = create_tag_extraction_file(spec_abi_settings);
+    launch_and_split(file_path, vars);
+    paths.get_filesystem().remove(file_path, VCPKG_LINE_INFO);
 
     auto var_list_itr = vars.begin();
     for (const auto& spec_abi_setting : spec_abi_settings)

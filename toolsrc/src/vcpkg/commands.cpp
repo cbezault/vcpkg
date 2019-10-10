@@ -47,6 +47,7 @@ namespace vcpkg::Commands
             {"autocomplete", &Autocomplete::perform_and_exit},
             {"hash", &Hash::perform_and_exit},
             {"fetch", &Fetch::perform_and_exit},
+            {"x-history", &PortHistory::perform_and_exit},
             {"x-vsinstances", &X_VSInstances::perform_and_exit},
         };
         return t;
@@ -100,13 +101,14 @@ namespace vcpkg::Commands::Hash
 
         const fs::path file_to_hash = args.command_arguments[0];
 
-        auto algorithm = vcpkg::Hash::Algorithm{vcpkg::Hash::Algorithm::Sha512};
+        auto algorithm = vcpkg::Hash::Algorithm::Sha512;
         if (args.command_arguments.size() == 2)
         {
             algorithm = vcpkg::Hash::algorithm_from_string(args.command_arguments[1]).value_or_exit(VCPKG_LINE_INFO);
         }
 
-        const std::string hash = vcpkg::Hash::get_file_hash(paths.get_filesystem(), file_to_hash, algorithm);
+        const std::string hash =
+            vcpkg::Hash::get_file_hash(VCPKG_LINE_INFO, paths.get_filesystem(), file_to_hash, algorithm);
         System::print2(hash, '\n');
         Checks::exit_success(VCPKG_LINE_INFO);
     }

@@ -46,7 +46,7 @@ namespace vcpkg
                 for (auto&& feature : spec->features)
                     f_specs.push_back(FeatureSpec{pspec, feature});
 
-                if (spec->features.empty()) f_specs.push_back(FeatureSpec{pspec, ""});
+                if (spec->features.empty()) f_specs.push_back(FeatureSpec{pspec, "core"});
             }
             else
             {

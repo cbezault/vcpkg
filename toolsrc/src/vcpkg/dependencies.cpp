@@ -18,20 +18,6 @@ namespace vcpkg::Dependencies
     {
         struct ClusterInstalled
         {
-            ClusterInstalled(ClusterInstalled&& installed)
-                : ipv(installed.ipv)
-                , remove_edges(std::move(installed.remove_edges))
-                , original_features(std::move(installed.original_features))
-            {
-            }
-
-            ClusterInstalled(const ClusterInstalled& installed)
-                : ipv(installed.ipv)
-                , remove_edges(installed.remove_edges)
-                , original_features(installed.original_features)
-            {
-            }
-
             ClusterInstalled(const InstalledPackageView& ipv) : ipv(ipv)
             {
                 original_features.emplace("core");
@@ -41,23 +27,7 @@ namespace vcpkg::Dependencies
                 }
             }
 
-            ClusterInstalled& operator=(const ClusterInstalled& r)
-            {
-                remove_edges = r.remove_edges;
-                original_features = r.original_features;
-
-                return *this;
-            }
-
-            ClusterInstalled& operator=(ClusterInstalled&& r)
-            {
-                remove_edges = std::move(r.remove_edges);
-                original_features = std::move(r.original_features);
-
-                return *this;
-            }
-
-            const InstalledPackageView& ipv;
+            InstalledPackageView ipv;
             std::unordered_set<PackageSpec> remove_edges;
             std::unordered_set<std::string> original_features;
         };
@@ -122,9 +92,9 @@ namespace vcpkg::Dependencies
 
                 ClusterInstallInfo& info = install_info.value_or_exit(VCPKG_LINE_INFO);
 
-                static const std::unordered_map<std::string, std::string> empty_vars;
+                auto maybe_vars = var_provider.get_dep_info_vars(spec);
                 const std::unordered_map<std::string, std::string> cmake_vars =
-                    var_provider.get_dep_info_vars(spec).value_or(empty_vars);
+                    maybe_vars.value_or(std::unordered_map<std::string, std::string>{});
 
                 const std::vector<Dependency>* qualified_deps;
                 if (feature == "core")
@@ -582,12 +552,6 @@ namespace vcpkg::Dependencies
         }
         Util::sort_unique_erase(feature_specs);
 
-        for (const FeatureSpec& spec : feature_specs)
-        {
-            System::print2(spec.spec().name(), "\n");
-        }
-        System::print2(feature_specs.size(), "\n");
-
         pgraph.install(feature_specs);
         for (const FeatureSpec& spec : feature_specs)
         {
@@ -597,14 +561,14 @@ namespace vcpkg::Dependencies
         return pgraph.serialize(options);
     }
 
-    std::vector<FeatureSpec> PackageGraph::get_required_removals(const PackageSpec& remove_spec) const
+    std::vector<FeatureSpec> PackageGraph::get_required_removals(const PackageSpec& first_remove_spec) const
     {
-        std::vector<PackageSpec> to_remove{remove_spec};
+        std::vector<PackageSpec> to_remove{first_remove_spec};
         std::vector<FeatureSpec> removed;
 
         while (!to_remove.empty())
         {
-            PackageSpec spec = std::move(to_remove.back());
+            PackageSpec remove_spec = std::move(to_remove.back());
             to_remove.pop_back();
 
             Cluster& clust = m_graph->get(remove_spec);
@@ -614,15 +578,19 @@ namespace vcpkg::Dependencies
 
             for (const std::string& orig_feature : info.original_features)
             {
-                removed.emplace_back(spec, orig_feature);
+                removed.emplace_back(remove_spec, orig_feature);
             }
-            removed.emplace_back(std::move(spec), "core");
 
-            for (const PackageSpec& remove_spec : info.remove_edges)
+            for (const PackageSpec& new_remove_spec : info.remove_edges)
             {
-                Cluster& depend_cluster = m_graph->get(remove_spec);
+                Cluster& depend_cluster = m_graph->get(new_remove_spec);
+                if (!depend_cluster.install_info)
+                {
+                    depend_cluster.install_info = make_optional(ClusterInstallInfo{});
+                    to_remove.emplace_back(new_remove_spec);
+                }
+
                 m_graph_plan->remove_graph.add_edge({&clust}, {&depend_cluster});
-                to_remove.emplace_back(remove_spec);
             }
         }
 
@@ -723,11 +691,16 @@ namespace vcpkg::Dependencies
                             // away we just defer to the next pass of the loop.
                             next_dependencies.emplace_back(dep_spec.spec(), feature);
                         }
+
+                        next_dependencies.emplace_back(dep_spec.spec(), "core");
                     }
 
                     // Note that we don't need to run this for each of the default dependencies since they all
                     // belong to the same cluster as the feature dependency.
-                    m_graph_plan->install_graph.add_edge({&clust}, {&dep_clust});
+                    if (dep_spec.spec() != clust.spec)
+                    {
+                        m_graph_plan->install_graph.add_edge({&clust}, {&dep_clust});
+                    }
                 }
 
                 next_dependencies.insert(next_dependencies.end(),
@@ -829,7 +802,7 @@ namespace vcpkg::Dependencies
             {
                 auto&& installed = p_cluster->installed.value_or_exit(VCPKG_LINE_INFO);
                 plan.emplace_back(InstallPlanAction{
-                    InstalledPackageView{installed.ipv},
+                    std::move(installed.ipv),
                     p_cluster->request_type,
                 });
             }

@@ -12,11 +12,13 @@
 namespace vcpkg::Strings::details
 {
     template<class T>
-    auto to_printf_arg(const T& t) -> decltype(t.to_string())
+    auto to_string(const T& t) -> decltype(t.to_string())
     {
         return t.to_string();
     }
 
+    // first looks up to_string on `T` using ADL; then, if that isn't found,
+    // uses the above definition which returns t.to_string()
     template<class T, class = std::enable_if_t<!std::is_arithmetic<T>::value>>
     auto to_printf_arg(const T& t) -> decltype(to_string(t))
     {
@@ -26,6 +28,8 @@ namespace vcpkg::Strings::details
     inline const char* to_printf_arg(const std::string& s) { return s.c_str(); }
 
     inline const char* to_printf_arg(const char* s) { return s; }
+
+    inline const wchar_t* to_printf_arg(const wchar_t* s) { return s; }
 
     template<class T, class = std::enable_if_t<std::is_arithmetic<T>::value>>
     T to_printf_arg(T s)

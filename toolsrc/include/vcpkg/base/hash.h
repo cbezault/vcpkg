@@ -13,8 +13,8 @@ namespace vcpkg::Hash
         Sha512,
     };
 
-    const char* to_string(Algorithm algo);
-    Optional<Algorithm> algorithm_from_string(StringView sv);
+    const char* to_string(Algorithm algo) noexcept;
+    Optional<Algorithm> algorithm_from_string(StringView sv) noexcept;
 
     struct Hasher
     {
@@ -26,9 +26,26 @@ namespace vcpkg::Hash
         virtual ~Hasher() = default;
     };
 
-    std::unique_ptr<Hasher> get_hasher_for(Algorithm algo);
+    std::unique_ptr<Hasher> get_hasher_for(Algorithm algo) noexcept;
 
-    std::string get_bytes_hash(const void* first, const void* last, Algorithm algo);
-    std::string get_string_hash(StringView s, Algorithm algo);
-    std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, Algorithm algo);
+    std::string get_bytes_hash(const void* first, const void* last, Algorithm algo) noexcept;
+    std::string get_string_hash(StringView s, Algorithm algo) noexcept;
+    std::string get_file_hash(const Files::Filesystem& fs,
+                              const fs::path& path,
+                              Algorithm algo,
+                              std::error_code& ec) noexcept;
+    inline std::string get_file_hash(LineInfo li,
+                                     const Files::Filesystem& fs,
+                                     const fs::path& path,
+                                     Algorithm algo) noexcept
+    {
+        std::error_code ec;
+        const auto result = get_file_hash(fs, path, algo, ec);
+        if (ec)
+        {
+            Checks::exit_with_message(li, "Failure to read file for hashing: %s", ec.message());
+        }
+
+        return result;
+    }
 }

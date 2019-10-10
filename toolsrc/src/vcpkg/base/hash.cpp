@@ -15,16 +15,13 @@
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #endif
 
-#define USE_BCRYPT_HASHER 1
-#else
-#define USE_BCRYPT_HASHER 0
 #endif
 
 namespace vcpkg::Hash
 {
     using uchar = unsigned char;
 
-    Optional<Algorithm> algorithm_from_string(StringView sv)
+    Optional<Algorithm> algorithm_from_string(StringView sv) noexcept
     {
         if (Strings::case_insensitive_ascii_equals(sv, "SHA1"))
         {
@@ -42,7 +39,7 @@ namespace vcpkg::Hash
         return {};
     }
 
-    const char* to_string(Algorithm algo)
+    const char* to_string(Algorithm algo) noexcept
     {
         switch (algo)
         {
@@ -53,94 +50,86 @@ namespace vcpkg::Hash
         }
     }
 
-    struct UInt128
+    namespace
     {
-        std::uint64_t top;
-        std::uint64_t bottom;
-
-        UInt128() = default;
-        UInt128(std::uint64_t value) : top(0), bottom(value) {}
-
-        UInt128& operator<<=(int by) noexcept
+        struct UInt128
         {
-            if (by == 0)
+            std::uint64_t top;
+            std::uint64_t bottom;
+
+            UInt128() = default;
+            UInt128(std::uint64_t value) : top(0), bottom(value) {}
+
+            UInt128& operator<<=(int by) noexcept
             {
+                if (by == 0)
+                {
+                    return *this;
+                }
+
+                if (by < 64)
+                {
+                    top <<= by;
+                    const auto shift_up = bottom >> (64 - by);
+                    top |= shift_up;
+                    bottom <<= by;
+                }
+                else
+                {
+                    top = bottom;
+                    top <<= (by - 64);
+                }
+
                 return *this;
             }
 
-            if (by < 64)
+            UInt128& operator>>=(int by) noexcept
             {
-                top <<= by;
-                const auto shift_up = bottom >> (64 - by);
-                top |= shift_up;
-                bottom <<= by;
-            }
-            else
-            {
-                top = bottom;
-                top <<= (by - 64);
-            }
+                if (by == 0)
+                {
+                    return *this;
+                }
 
-            return *this;
-        }
+                if (by < 64)
+                {
+                    bottom >>= by;
+                    const auto shift_down = top << (64 - by);
+                    bottom |= shift_down;
+                    top >>= by;
+                }
+                else
+                {
+                    bottom = top;
+                    bottom >>= (by - 64);
+                }
 
-        UInt128& operator>>=(int by) noexcept
-        {
-            if (by == 0)
-            {
                 return *this;
             }
 
-            if (by < 64)
+            UInt128& operator+=(std::size_t lhs) noexcept
             {
-                bottom >>= by;
-                const auto shift_down = top << (64 - by);
-                bottom |= shift_down;
-                top >>= by;
+                // bottom + lhs > uint64::max
+                if (bottom > std::numeric_limits<std::uint64_t>::max() - lhs)
+                {
+                    top += 1;
+                }
+                bottom += lhs;
+                return *this;
             }
-            else
-            {
-                bottom = top;
-                bottom >>= (by - 64);
-            }
+        };
 
-            return *this;
-        }
-
-        UInt128& operator+=(std::size_t lhs) noexcept
-        {
-            // bottom + lhs > uint64::max
-            if (bottom > std::numeric_limits<std::uint64_t>::max() - lhs)
-            {
-                top += 1;
-            }
-            bottom += lhs;
-            return *this;
-        }
-    };
-
-    UInt128 operator>>(UInt128, int) noexcept;
-    UInt128 operator<<(UInt128, int) noexcept;
-    UInt128 operator+(UInt128, std::size_t) noexcept;
-
-    uchar operator&(UInt128, uchar) noexcept;
-
-    UInt128 operator>>(UInt128 lhs, int by) noexcept { return lhs >>= by; }
-    UInt128 operator<<(UInt128 lhs, int by) noexcept { return lhs <<= by; }
-    UInt128 operator+(UInt128 lhs, std::size_t rhs) noexcept { return lhs += rhs; }
-
-    uchar operator&(UInt128 lhs, uchar rhs) noexcept { return lhs.bottom & rhs; }
-
+    }
     template<class T>
     void top_bits(T) = delete;
 
-    static constexpr uchar top_bits(std::uint32_t x) { return (x >> 24) & 0xFF; }
-    static constexpr uchar top_bits(std::uint64_t x) { return (x >> 56) & 0xFF; }
-    static constexpr uchar top_bits(UInt128 x) { return top_bits(x.top); }
+    static constexpr uchar top_bits(uchar x) noexcept { return x; }
+    static constexpr uchar top_bits(std::uint32_t x) noexcept { return (x >> 24) & 0xFF; }
+    static constexpr uchar top_bits(std::uint64_t x) noexcept { return (x >> 56) & 0xFF; }
+    static constexpr uchar top_bits(UInt128 x) noexcept { return top_bits(x.top); }
 
     // treats UIntTy as big endian for the purpose of this mapping
     template<class UIntTy>
-    static std::string to_hex(const UIntTy* start, const UIntTy* end)
+    static std::string to_hex(const UIntTy* start, const UIntTy* end) noexcept
     {
         static constexpr char HEX_MAP[] = "0123456789abcdef";
 
@@ -175,16 +164,32 @@ namespace vcpkg::Hash
 
     namespace
     {
-#if USE_BCRYPT_HASHER
+#if defined(_WIN32)
+        BCRYPT_ALG_HANDLE get_alg_handle(LPCWSTR algorithm_identifier) noexcept
+        {
+            BCRYPT_ALG_HANDLE result;
+            auto error = BCryptOpenAlgorithmProvider(&result, algorithm_identifier, nullptr, 0);
+            if (!NT_SUCCESS(error))
+            {
+                Checks::exit_with_message(VCPKG_LINE_INFO, "Failure to open algorithm: %ls", algorithm_identifier);
+            }
+
+            return result;
+        }
+
         struct BCryptHasher : Hasher
         {
+            static const BCRYPT_ALG_HANDLE sha1_alg_handle;
+            static const BCRYPT_ALG_HANDLE sha256_alg_handle;
+            static const BCRYPT_ALG_HANDLE sha512_alg_handle;
+
             explicit BCryptHasher(Algorithm algo) noexcept
             {
                 switch (algo)
                 {
-                    case Algorithm::Sha1: alg_handle = BCRYPT_SHA1_ALG_HANDLE; break;
-                    case Algorithm::Sha256: alg_handle = BCRYPT_SHA256_ALG_HANDLE; break;
-                    case Algorithm::Sha512: alg_handle = BCRYPT_SHA512_ALG_HANDLE; break;
+                    case Algorithm::Sha1: alg_handle = sha1_alg_handle; break;
+                    case Algorithm::Sha256: alg_handle = sha256_alg_handle; break;
+                    case Algorithm::Sha512: alg_handle = sha512_alg_handle; break;
                     default: Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown algorithm");
                 }
 
@@ -201,11 +206,10 @@ namespace vcpkg::Hash
                 // only matters on 64-bit -- BCryptHasher takes an unsigned long
                 // length, so if you have an array bigger than 2**32-1 elements,
                 // you have a problem.
-                if (sizeof(end - start) > sizeof(unsigned long))
-                {
-                    constexpr auto max = static_cast<std::ptrdiff_t>(std::numeric_limits<unsigned long>::max());
-                    Checks::check_exit(VCPKG_LINE_INFO, end - start <= max);
-                }
+#if defined(_M_AMD64) || defined(_M_ARM64)
+                constexpr std::ptrdiff_t max = std::numeric_limits<unsigned long>::max();
+                Checks::check_exit(VCPKG_LINE_INFO, end - start <= max);
+#endif
 
                 const auto length = static_cast<unsigned long>(end - start);
                 const NTSTATUS error_code = BCryptHashData(hash_handle, start, length, 0);
@@ -230,6 +234,8 @@ namespace vcpkg::Hash
                 return to_hex(hash, hash + hash_size);
             }
 
+            ~BCryptHasher() { BCryptDestroyHash(hash_handle); }
+
         private:
             unsigned long get_hash_buffer_size() const
             {
@@ -249,6 +255,10 @@ namespace vcpkg::Hash
             BCRYPT_HASH_HANDLE hash_handle = nullptr;
             BCRYPT_ALG_HANDLE alg_handle = nullptr;
         };
+
+        const BCRYPT_ALG_HANDLE BCryptHasher::sha1_alg_handle = get_alg_handle(BCRYPT_SHA1_ALGORITHM);
+        const BCRYPT_ALG_HANDLE BCryptHasher::sha256_alg_handle = get_alg_handle(BCRYPT_SHA256_ALGORITHM);
+        const BCRYPT_ALG_HANDLE BCryptHasher::sha512_alg_handle = get_alg_handle(BCRYPT_SHA512_ALGORITHM);
 #else
 
         template<class WordTy>
@@ -433,12 +443,12 @@ namespace vcpkg::Hash
                         f = (b & c) | (~b & d);
                         k = 0x5A827999;
                     }
-                    else if (20 <= i && i < 40)
+                    else if (i < 40)
                     {
                         f = b ^ c ^ d;
                         k = 0x6ED9EBA1;
                     }
-                    else if (40 <= i && i < 60)
+                    else if (i < 60)
                     {
                         f = (b & c) | (b & d) | (c & d);
                         k = 0x8F1BBCDC;
@@ -658,12 +668,16 @@ namespace vcpkg::Hash
 
             std::uint64_t m_digest[8];
         };
+
+        // This is required on older compilers, since it was required in C++14
+        constexpr std::array<std::uint32_t, Sha256Algorithm::number_of_rounds> Sha256Algorithm::round_constants;
+        constexpr std::array<std::uint64_t, Sha512Algorithm::number_of_rounds> Sha512Algorithm::round_constants;
 #endif
     }
 
-    std::unique_ptr<Hasher> get_hasher_for(Algorithm algo)
+    std::unique_ptr<Hasher> get_hasher_for(Algorithm algo) noexcept
     {
-#if USE_BCRYPT_HASHER
+#if defined(_WIN32)
         return std::make_unique<BCryptHasher>(algo);
 #else
         switch (algo)
@@ -677,9 +691,9 @@ namespace vcpkg::Hash
     }
 
     template<class F>
-    static std::string do_hash(Algorithm algo, const F& f)
+    static std::string do_hash(Algorithm algo, const F& f) noexcept
     {
-#if USE_BCRYPT_HASHER
+#if defined(_WIN32)
         auto hasher = BCryptHasher(algo);
         return f(hasher);
 #else
@@ -705,7 +719,7 @@ namespace vcpkg::Hash
 #endif
     }
 
-    std::string get_bytes_hash(const void* first, const void* last, Algorithm algo)
+    std::string get_bytes_hash(const void* first, const void* last, Algorithm algo) noexcept
     {
         return do_hash(algo, [first, last](Hasher& hasher) {
             hasher.add_bytes(first, last);
@@ -713,14 +727,45 @@ namespace vcpkg::Hash
         });
     }
 
-    std::string get_string_hash(StringView sv, Algorithm algo)
+    std::string get_string_hash(StringView sv, Algorithm algo) noexcept
     {
         return get_bytes_hash(sv.data(), sv.data() + sv.size(), algo);
     }
 
-    std::string get_file_hash(const Files::Filesystem& fs, const fs::path& path, Algorithm algo)
+    // TODO: use Files::Filesystem to open a file
+    std::string get_file_hash(const Files::Filesystem&,
+                              const fs::path& path,
+                              Algorithm algo,
+                              std::error_code& ec) noexcept
     {
-        Util::unused(fs, path, algo);
-        vcpkg::Checks::exit_with_message(VCPKG_LINE_INFO, "aww");
+        auto file = std::fstream(path.c_str(), std::ios_base::in | std::ios_base::binary);
+        if (!file)
+        {
+            ec.assign(ENOENT, std::system_category());
+            return {};
+        }
+
+        return do_hash(algo, [&file, &ec](Hasher& hasher) {
+            constexpr std::size_t buffer_size = 4096;
+            auto buffer = std::make_unique<char[]>(buffer_size);
+            for (;;)
+            {
+                file.read(buffer.get(), buffer_size);
+                if (file.eof())
+                {
+                    hasher.add_bytes(buffer.get(), buffer.get() + file.gcount());
+                    return hasher.get_hash();
+                }
+                else if (file)
+                {
+                    hasher.add_bytes(buffer.get(), buffer.get() + buffer_size);
+                }
+                else
+                {
+                    ec = std::io_errc::stream;
+                    return std::string();
+                }
+            }
+        });
     }
 }
