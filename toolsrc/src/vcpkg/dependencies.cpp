@@ -308,9 +308,12 @@ namespace vcpkg::Dependencies
         for (const auto& kv : feature_dependencies)
         {
             feature_list.emplace_back(kv.first);
-            for (const FeatureSpec& spec : kv.second)
+            for (const FeatureSpec& fspec : kv.second)
             {
-                package_dependencies.emplace_back(spec.spec());
+                if (spec != fspec.spec())
+                {
+                    package_dependencies.emplace_back(fspec.spec());
+                }
             }
         }
 
@@ -790,10 +793,6 @@ namespace vcpkg::Dependencies
             if (auto info_ptr = p_cluster->install_info.get())
             {
                 auto&& scfl = p_cluster->scfl;
-
-                auto dep_specs = Util::fmap(m_graph_plan->install_graph.adjacency_list(p_cluster),
-                                            [](ClusterPtr const& p) { return p->spec; });
-                Util::sort_unique_erase(dep_specs);
 
                 plan.emplace_back(InstallPlanAction{
                     p_cluster->spec, scfl, p_cluster->request_type, std::move(info_ptr->build_edges)});
