@@ -55,8 +55,6 @@ namespace vcpkg::Dependencies
             {
                 std::vector<FeatureSpec> new_dependencies;
 
-                System::print2(__func__, " Adding a new feature ", feature, " to ", m_spec.to_string(), "\n");
-
                 // If install_info is null we have never added a feature which hasn't already been installed to this
                 // cluster
                 if (!m_install_info.has_value())
@@ -129,11 +127,6 @@ namespace vcpkg::Dependencies
                 }
                 Util::sort(dep_list);
 
-                for (const FeatureSpec& dep : dep_list)
-                {
-                    System::print2(__func__, " Found in deplist: ", dep.to_string(), "\n");
-                }
-
                 // If a change in cmake_vars or the initial addition of this feature results in dependencies being
                 // added inform the caller
                 auto find_itr = info.build_edges.find(feature);
@@ -156,21 +149,6 @@ namespace vcpkg::Dependencies
                         auto mid = find_itr->second.insert(
                             find_itr->second.begin(), new_dependencies.begin(), new_dependencies.end());
                         std::inplace_merge(find_itr->second.begin(), mid, find_itr->second.end());
-                    }
-                }
-
-                for (const FeatureSpec& new_dep : new_dependencies)
-                {
-                    System::print2(__func__, "Found new dep: ", new_dep.to_string());
-                }
-
-                for (auto&& x : info.build_edges)
-                {
-                    System::print2(__func__, "Feature: ", x.first, " depends on\n");
-
-                    for (auto&& y : x.second)
-                    {
-                        System::print2(__func__, y.to_string(), "\n");
                     }
                 }
 
@@ -690,10 +668,8 @@ namespace vcpkg::Dependencies
         std::vector<FeatureSpec> next_dependencies{specs.begin(), specs.end()};
 
         // Mark all the clusters that are explicitly requested as visited so we don't add default features later
-        System::print2("Asked to install the following specs\n");
         for (const FeatureSpec& explicit_spec : specs)
         {
-            System::print2(__func__, " FeatureSpec: ", explicit_spec.to_string(), "\n");
             Cluster& clust = m_graph->get(explicit_spec.spec());
             if (!clust.visited)
             {
@@ -711,8 +687,6 @@ namespace vcpkg::Dependencies
                 // Extract the top of the stack
                 FeatureSpec spec = std::move(next_dependencies.back());
                 next_dependencies.pop_back();
-
-                System::print2(__func__, " Working with: ", spec.to_string(), "\n");
 
                 // Get the cluster for the PackageSpec of the FeatureSpec we are adding to the install graph
                 Cluster& clust = m_graph->get(spec.spec());
@@ -739,7 +713,6 @@ namespace vcpkg::Dependencies
                         // the updated CMakeVarProvider. We do this to load the triplet values in as few discrete
                         // calls as possible. Every time we load a list of ports it's an invocation of CMake, which
                         // takes ~150ms per call.
-                        System::print2(__func__, " Found a qualified Dependency for: ", spec.to_string(), "\n");
                         if (!dep.qualifier.empty())
                         {
                             qualified_specs.emplace_back(spec);
@@ -753,11 +726,6 @@ namespace vcpkg::Dependencies
                 auto new_dependencies = clust.add_feature(spec.feature(), m_var_provider);
                 bool build_is_needed = clust.m_install_info.has_value();
 
-                for (const FeatureSpec& dep : new_dependencies)
-                {
-                    System::print2(__func__, " Found a new Dependency to add: ", dep.to_string(), "\n");
-                }
-
                 // If the port was already installed and this is the first time we're adding features then we're
                 // going to need to transiently uninstall it. Checking that the port is already installed and adding
                 // a feature resulted in more new dependencies is insufficient since a feature can have no
@@ -765,20 +733,12 @@ namespace vcpkg::Dependencies
                 if (port_installed && !build_was_needed && build_is_needed)
                 {
                     auto reinstall_features = graph_removals(spec.spec());
-                    for (const FeatureSpec& re_feat : reinstall_features)
-                    {
-                        System::print2(__func__, " Found feature to reinstall: ", re_feat.to_string(), "\n");
-                    }
                     next_dependencies.insert(next_dependencies.end(),
                                              std::make_move_iterator(reinstall_features.begin()),
                                              std::make_move_iterator(reinstall_features.end()));
                 }
 
                 auto new_default_dependencies = graph_installs(clust.m_spec, new_dependencies);
-                for (const FeatureSpec& def : new_default_dependencies)
-                {
-                    System::print2(__func__, " Found new default feature to install: ", def.to_string(), "\n");
-                }
                 next_dependencies.insert(next_dependencies.end(),
                                          std::make_move_iterator(new_dependencies.begin()),
                                          std::make_move_iterator(new_dependencies.end()));
